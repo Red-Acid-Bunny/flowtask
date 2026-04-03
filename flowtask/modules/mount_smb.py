@@ -2,6 +2,8 @@
 
 import subprocess
 import logging
+import tempfile
+import os
 from pathlib import Path
 
 from ..modules.base import BaseModule, param
@@ -44,11 +46,34 @@ class MountSmb(BaseModule):
             opts += f",uid={self.uid}"
         if self.gid >= 0:
             opts += f",gid={self.gid}"
+
+        # Credentials file — единственный надёжный способ передать пароль
+        # через sudo. sudo сбрасывает env (PASSWD), а mount.cifs читает
+        # пароль с /dev/tty. credentials= файл решает обе проблемы.
+        # Важно: НЕ добавлять username=/domain= в опции монтирования
+        # одновременно с credentials= — mount.cifs будет игнорировать
+        # пароль из файла и запрашивать интерактивно.
+        cred_file = None
         if self.user:
-            opts += f",username={self.user}"
-            if self.domain:
-                opts += f",domain={self.domain}"
-        # guest если нет user
+            if self.password:
+                # Создаём временный файл с учётными данными
+                cred_file = tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".cifscred", delete=False,
+                )
+                cred_file.write(f"username={self.user}\n")
+                cred_file.write(f"password={self.password}\n")
+                if self.domain:
+                    cred_file.write(f"domain={self.domain}\n")
+                cred_file.close()
+                os.chmod(cred_file.name, 0o600)
+                opts += f",credentials={cred_file.name}"
+            else:
+                # Без пароля — гостевой доступ с указанным username
+                opts += f",username={self.user},guest"
+                if self.domain:
+                    opts += f",domain={self.domain}"
+        else:
+            opts += ",guest"
 
         cmd = ["sudo", "mount", "-t", "cifs",
                f"//{self.server}/{self.share}",
@@ -57,15 +82,9 @@ class MountSmb(BaseModule):
         logger.info("Mounting //%s/%s → %s", self.server, self.share, mp)
 
         try:
-            import os
-            env = None
-            if self.password and self.user:
-                # Передаём пароль через переменную окружения PASSWD
-                env = {**os.environ, "PASSWD": self.password}
-
             result = subprocess.run(
                 cmd, capture_output=True, text=True, timeout=30,
-                env=env, stdin=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired:
             return ModuleResult.error(f"Mount timed out (30s)")
@@ -73,6 +92,13 @@ class MountSmb(BaseModule):
             return ModuleResult.error(
                 "mount.cifs not found. Install: sudo apt install cifs-utils"
             )
+        finally:
+            # Удаляем файл с учётными данными
+            if cred_file:
+                try:
+                    os.unlink(cred_file.name)
+                except OSError:
+                    pass
 
         if result.returncode != 0:
             err = result.stderr.strip() or result.stdout.strip()
