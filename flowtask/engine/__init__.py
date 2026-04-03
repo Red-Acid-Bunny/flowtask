@@ -1,5 +1,5 @@
 """
-FlowTask Engine — context, template, result, module system.
+FlowTask Engine — context, template, result, module system, runner.
 
 Lazy imports to avoid circular dependencies.
 """
@@ -18,6 +18,15 @@ def __getattr__(name):
     if name == "BashModuleAdapter":
         from .bash_adapter import BashModuleAdapter
         return BashModuleAdapter
+    if name == "Runner":
+        from .runner import Runner
+        return Runner
+    if name == "Playbook":
+        from .runner import Playbook
+        return Playbook
+    if name == "PlaybookResult":
+        from .runner import PlaybookResult
+        return PlaybookResult
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
@@ -27,4 +36,7 @@ __all__ = [
     "ModuleLoader",
     "ModuleNotFoundError",
     "BashModuleAdapter",
+    "Runner",
+    "Playbook",
+    "PlaybookResult",
 ]
