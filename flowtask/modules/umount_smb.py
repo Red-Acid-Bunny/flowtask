@@ -27,8 +27,8 @@ class UmountSmb(BaseModule):
                 data={"mount_point": str(mp), "changed": False},
             )
 
-        flag = "-l" if self.lazy else ""
-        cmd = ["sudo", "umount", flag, str(mp)]
+        flag = ["-l"] if self.lazy else []
+        cmd = ["sudo", "umount", *flag, str(mp)]
 
         logger.info("Unmounting %s", mp)
 

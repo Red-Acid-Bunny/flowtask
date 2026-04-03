@@ -67,7 +67,8 @@ tasks:
     module: archive
     params:
       src: "{{ vars.out_dir }}"
-      dest: "{{ vars.out_base }}/deploy_{{ today }}.tar.gz"
+      dest_dir: "{{ vars.out_base }}"
+      name: "deploy_{{ today }}"
       format: "tar.gz"
     tags: [archive]
     when: success

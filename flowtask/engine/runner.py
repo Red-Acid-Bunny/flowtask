@@ -286,14 +286,18 @@ class Runner:
         # 2. Загрузка контекста
         inv_dir = self._inventory_dir or self._playbook.inventory
         self._context = Context.from_inventory(inv_dir)
+
+        # 3. Template engine (создаём ДО применения playbook vars,
+        #    чтобы можно было развернуть шаблоны внутри них)
+        self._template = Template(self._context)
+
         # Применяем playbook-level vars (перекрывают inventory)
+        # Шаблоны внутри vars разворачиваются через Template engine
         if self._playbook.vars:
             for key, value in self._playbook.vars.items():
-                self._context.set(key, value)
+                rendered = self._template.render_any(value)
+                self._context.set(key, rendered)
             logger.debug("Applied playbook vars: %d keys", len(self._playbook.vars))
-
-        # 3. Template engine
-        self._template = Template(self._context)
 
         # 4. Module loader
         self._loader = ModuleLoader(extra_modules_dirs=self._extra_modules_dirs)
