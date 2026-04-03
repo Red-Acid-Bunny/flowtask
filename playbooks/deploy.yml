@@ -43,10 +43,7 @@ tasks:
       path: "{{ vars.smb_path }}"
       mount_point: "{{ vars.smb_mount_point }}"
       dest: "{{ vars.out_dir }}"
-      folders:
-        {% for folder in vars.download_folders %}
-        - "{{ folder }}"
-        {% endfor %}
+      folders: "{{ vars.download_folders }}"
       excludes: "{{ vars.rsync_filter_excludes }}"
     tags: [sync, download]
     register: sync_result
