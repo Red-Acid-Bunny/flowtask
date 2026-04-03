@@ -79,7 +79,7 @@ class ModuleLoader:
         Returns:
             Список имён найденных модулей
         """
-        found = []
+        found = set()
 
         # Python-модули
         for search_dir in self._search_dirs:
@@ -87,7 +87,7 @@ class ModuleLoader:
                 if py_file.name.startswith("_"):
                     continue
                 names = self._load_python_module(py_file)
-                found.extend(names)
+                found.update(str(n) for n in names)  # ensure strings only
 
         # Bash-модули
         for bash_dir in self._bash_dirs:
@@ -95,10 +95,10 @@ class ModuleLoader:
                 if sh_file.name.startswith("_"):
                     continue
                 self._register_bash_module(sh_file)
-                found.append(sh_file.stem)
+                found.add(sh_file.stem)
 
-        logger.info("Discovered %d modules: %s", len(found), found)
-        return sorted(set(found))
+        logger.info("Discovered %d modules: %s", len(found), sorted(found))
+        return sorted(found)
 
     def _load_python_module(self, path: Path) -> list[str]:
         """Загрузить Python-файл и зарегистрировать классы-наследники BaseModule.
@@ -126,12 +126,14 @@ class ModuleLoader:
             if attr_value.__module__ != module_name:
                 continue
             if issubclass(attr_value, BaseModule) and attr_value is not BaseModule:
-                # Имя модуля — из поля name или из имени класса
-                instance_name = attr_value.name if hasattr(attr_value, 'name') and attr_value.name else attr_name
-                # CamelCase → snake_case если это имя класса
-                if instance_name == attr_name:
+                # Имя модуля — из поля name (только если это строка, не дескриптор)
+                cls_name = attr_value.name
+                if isinstance(cls_name, str) and cls_name:
+                    instance_name = cls_name
+                else:
+                    # CamelCase → snake_case
                     import re
-                    instance_name = re.sub(r'(?<!^)(?=[A-Z])', '_', instance_name).lower()
+                    instance_name = re.sub(r'(?<!^)(?=[A-Z])', '_', attr_name).lower()
 
                 if instance_name in self._registry:
                     logger.warning("Module '%s' already registered, overwriting with %s",
@@ -182,7 +184,7 @@ class ModuleLoader:
             {name: type} — 'python' или 'bash'
         """
         result = {}
-        for name, module in sorted(self._registry.items()):
+        for name, module in sorted(self._registry.items(), key=lambda x: str(x[0])):
             if isinstance(module, BashModuleAdapter):
                 result[name] = "bash"
             elif inspect.isclass(module) and issubclass(module, BaseModule):
