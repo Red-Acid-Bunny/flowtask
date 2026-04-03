@@ -28,8 +28,9 @@ tasks:
       server: "{{ vars.smb_server }}"
       share: "{{ vars.smb_share }}"
       mount_point: "{{ vars.smb_mount_point }}"
-      username: "{{ secrets.smb_user }}"
+      user: "{{ secrets.smb_user }}"
       password: "{{ secrets.smb_pass }}"
+      domain: "{{ secrets.smb_domain }}"
     tags: [smb, mount]
 
   # ============================================
