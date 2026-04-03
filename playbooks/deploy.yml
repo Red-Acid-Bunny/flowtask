@@ -1,0 +1,85 @@
+# FlowTask — выгрузка ПО с SMB-сервера
+#
+# Использование:
+#   flowtask run playbooks/deploy.yml
+#   flowtask run playbooks/deploy.yml --dry-run        # предпросмотр
+#   flowtask run playbooks/deploy.yml --verbose        # подробный вывод
+#   flowtask run playbooks/deploy.yml --limit mount    # только задачу mount
+#
+# Предварительно:
+#   1. Скопируйте inventory/secrets.yml.example → inventory/secrets.yml
+#   2. Заполните реальные данные в inventory/secrets.yml
+#   3. При необходимости создайте inventory/vars.local.yml для локальных переопределений
+
+name: "Deploy — выгрузка ПО с SMB"
+inventory: inventory/
+
+# Переменные уровня playbook (перекрывают inventory/vars.yml)
+vars:
+  out_dir: "{{ vars.out_base }}/{{ today }}"
+
+tasks:
+  # ============================================
+  # 1. Монтирование SMB-ресурса
+  # ============================================
+  - name: "Mount SMB share"
+    module: mount_smb
+    params:
+      server: "{{ vars.smb_server }}"
+      share: "{{ vars.smb_share }}"
+      mount_point: "{{ vars.smb_mount_point }}"
+      username: "{{ secrets.smb_user }}"
+      password: "{{ secrets.smb_pass }}"
+    tags: [smb, mount]
+
+  # ============================================
+  # 2. Выгрузка папок через rsync (Bash-модуль)
+  # ============================================
+  - name: "Sync folders from SMB"
+    module: smb_mount
+    params:
+      server: "{{ vars.smb_server }}"
+      share: "{{ vars.smb_share }}"
+      path: "{{ vars.smb_path }}"
+      mount_point: "{{ vars.smb_mount_point }}"
+      dest: "{{ vars.out_dir }}"
+      folders:
+        {% for folder in vars.download_folders %}
+        - "{{ folder }}"
+        {% endfor %}
+      excludes: "{{ vars.rsync_filter_excludes }}"
+    tags: [sync, download]
+    register: sync_result
+
+  # ============================================
+  # 3. Обработка результатов
+  # ============================================
+  - name: "Check sync results"
+    module: copy
+    params:
+      src: "/dev/null"
+      dest: "{{ vars.out_dir }}/._sync_ok"
+    when: success
+    tags: [sync, post-process]
+
+  # ============================================
+  # 4. Создание архива
+  # ============================================
+  - name: "Create archive"
+    module: archive
+    params:
+      src: "{{ vars.out_dir }}"
+      dest: "{{ vars.out_base }}/deploy_{{ today }}.tar.gz"
+      format: "tar.gz"
+    tags: [archive]
+    when: success
+
+  # ============================================
+  # 5. Размонтирование SMB (всегда)
+  # ============================================
+  - name: "Unmount SMB share"
+    module: umount_smb
+    params:
+      mount_point: "{{ vars.smb_mount_point }}"
+    tags: [smb, umount]
+    when: always

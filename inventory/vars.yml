@@ -1,0 +1,31 @@
+# FlowTask — переменные окружения
+# Эти переменные используются в playbook'ах через {{ vars.key }}
+# Локальные переопределения — в vars.local.yml (не коммитится)
+
+# SMB-сервер
+smb_server: "192.168.0.8"
+smb_share: "box_delta_bin"
+smb_path: "develop/V5-net6"
+smb_mount_point: "/mnt/smb"
+
+# rsync
+rsync_user: ""
+rsync_module: ""
+rsync_filter_excludes:
+  - "*.tmp"
+  - "*.bak"
+  - "*.log"
+  - "Thumbs.db"
+  - ".DS_Store"
+
+# Выходная директория
+out_base: "./out"
+
+# Список папок для выгрузки
+download_folders:
+  - cs_dataserver3
+  - cs_monitorhttpserver
+
+# Папки d8_monitor.* → мерж в cs_monitorhttpserver
+merge_d8_monitors: true
+d8_monitor_pattern: "d8_monitor.*"
