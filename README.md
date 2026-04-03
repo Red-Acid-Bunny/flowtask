@@ -1,357 +1,535 @@
 # FlowTask
 
-**Task runner for file operations** — YAML playbooks with Python and Bash modules.
+**Запускатор задач для файловых операций** — YAML-плейбуки с Python- и Bash-модулями.
 
-FlowTask automates file operations (copy, move, delete, archive, SMB mount/unmount) using declarative YAML playbooks. Inspired by Ansible but lightweight and focused on file management tasks.
+FlowTask автоматизирует файловые операции (копирование, перемещение, удаление, архивация, монтирование/размонтирование SMB) с помощью декларативных YAML-плейбуков. Вдохновлён Ansible, но легче и сфокусирован на задачах управления файлами.
 
-## Features
+---
 
-- **YAML playbooks** — declare tasks in a simple, readable format
-- **Variable interpolation** — `{{ vars.key }}`, `{{ secrets.key }}`, `{{ today }}`
-- **Dual module system** — write modules in Python (native) or Bash (JSON protocol)
-- **Dry-run** — preview changes without execution (`--dry-run`)
-- **Idempotent** — safe to run multiple times, modules detect existing state
-- **Conditional execution** — `when: success | failure | always | changed`
-- **Result registration** — `register` saves task output for later tasks
-- **Task filtering** — `--limit`, `--tags`, `--skip_tags`
-- **Secret masking** — secrets are never printed in plain text in logs
-- **Built-in variables** — `{{ today }}`, `{{ now }}`, `{{ timestamp }}`
+## Возможности
 
-## Quick Start
+- **YAML-плейбуки** — объявляйте задачи в простом и читаемом формате
+- **Подстановка переменных** — `{{ vars.key }}`, `{{ secrets.key }}`, `{{ today }}`
+- **Двойная система модулей** — пишите модули на Python (нативные) или Bash (JSON-протокол)
+- **Dry-run** — предпросмотр изменений без реального выполнения (`--dry-run`)
+- **Идемпотентность** — безопасно запускать многократно, модули обнаруживают текущее состояние
+- **Условное выполнение** — `when: success | failure | always | changed`
+- **Регистрация результатов** — `register` сохраняет вывод задачи для использования в последующих
+- **Фильтрация задач** — `--limit`, `--tags`, `--skip-tags`
+- **Маскирование секретов** — пароли и токены никогда не выводятся в логах в открытом виде
+- **Встроенные переменные** — `{{ today }}`, `{{ now }}`, `{{ timestamp }}`
+
+---
+
+## Быстрый старт
 
 ```bash
-# Install
+# Установка
 pip install -e .
 
-# Prepare secrets
+# Подготовка секретов
 cp inventory/secrets.yml.example inventory/secrets.yml
-# Edit inventory/secrets.yml with real values
+# Отредактируйте inventory/secrets.yml и укажите реальные данные
 
-# Run playbook
+# Запуск плейбука
 flowtask run playbooks/deploy.yml
 
-# Preview without execution
+# Предпросмотр без выполнения
 flowtask run playbooks/deploy.yml --dry-run
 
-# Verbose output
+# Подробный вывод (DEBUG)
 flowtask run playbooks/deploy.yml --verbose
 
-# Run specific task only
+# Запуск только конкретной задачи (по подстроке в имени)
 flowtask run playbooks/deploy.yml --limit "mount"
 
-# Run tasks with specific tags
+# Запуск задач с определёнными тегами
 flowtask run playbooks/deploy.yml --tags smb sync
 
-# Validate playbook
+# Валидация плейбука без выполнения
 flowtask validate playbooks/deploy.yml
 
-# List available modules
+# Список доступных модулей
 flowtask list-modules --verbose
 
-# Version
+# Версия
 flowtask version
 ```
 
-## Project Structure
+---
+
+## Структура проекта
 
 ```
 flowtask/
-├── flowtask/                  # Engine & modules
-│   ├── __init__.py            # Package (v0.1.0)
-│   ├── cli.py                 # CLI entry point (argparse)
+├── flowtask/                  # Движок и модули
+│   ├── __init__.py            # Пакет (v0.1.0)
+│   ├── cli.py                 # CLI — точка входа (argparse)
 │   ├── engine/
-│   │   ├── __init__.py        # Lazy imports, public API
-│   │   ├── runner.py          # Playbook orchestrator
-│   │   ├── context.py         # Variable/secrets loader
-│   │   ├── template.py        # {{ }} interpolation engine
-│   │   ├── result.py          # ModuleResult dataclass
-│   │   ├── module_loader.py   # Auto-discovery of modules
-│   │   └── bash_adapter.py    # JSON bridge for Bash modules
-│   └── modules/               # Built-in Python modules
-│       ├── base.py            # BaseModule ABC + @param descriptor
-│       ├── copy.py            # Copy files/directories
-│       ├── move.py            # Move/rename files
-│       ├── delete.py          # Delete files/directories
-│       ├── archive.py         # Create archives (zip, tar.gz, tar.xz)
-│       ├── mount_smb.py       # Mount SMB/CIFS share
-│       └── umount_smb.py      # Unmount SMB/CIFS share
-├── modules/bash/              # User Bash modules
-│   ├── smb_mount.sh           # SMB mount (Bash)
-│   └── smb_umount.sh          # SMB unmount (Bash)
+│   │   ├── __init__.py        # Ленивые импорты, публичный API
+│   │   ├── runner.py          # Оркестратор выполнения плейбуков
+│   │   ├── context.py         # Загрузка переменных и секретов
+│   │   ├── template.py        # Движок подстановки {{ }}
+│   │   ├── result.py          # ModuleResult — контракт результатов
+│   │   ├── module_loader.py   # Автообнаружение модулей
+│   │   └── bash_adapter.py    # JSON-мост для Bash-модулей
+│   └── modules/               # Встроенные Python-модули
+│       ├── base.py            # BaseModule (ABC) + дескриптор @param
+│       ├── copy.py            # Копирование файлов/директорий
+│       ├── move.py            # Перемещение/переименование файлов
+│       ├── delete.py          # Удаление файлов/директорий
+│       ├── archive.py         # Создание архивов (zip, tar.gz, tar.xz)
+│       ├── mount_smb.py       # Монтирование SMB/CIFS-ресурса
+│       └── umount_smb.py      # Размонтирование SMB/CIFS-ресурса
+├── modules/bash/              # Пользовательские Bash-модули
+│   ├── smb_mount.sh           # Монтирование SMB (Bash)
+│   └── smb_umount.sh          # Размонтирование SMB (Bash)
 ├── inventory/
-│   ├── vars.yml               # Variables (committed)
-│   ├── vars.local.yml         # Local overrides (gitignored)
-│   ├── vars.local.yml.example # Template for local overrides
-│   ├── secrets.yml            # Secrets (gitignored)
-│   └── secrets.yml.example    # Template for secrets
+│   ├── vars.yml               # Переменные (коммитятся в репозиторий)
+│   ├── vars.local.yml         # Локальные переопределения (gitignored)
+│   ├── vars.local.yml.example # Шаблон локальных переопределений
+│   ├── secrets.yml            # Секреты (gitignored)
+│   └── secrets.yml.example    # Шаблон секретов
 ├── playbooks/
-│   └── deploy.yml             # Deploy playbook example
-├── tests/                     # 181 tests
-│   ├── test_engine.py         # Context, Template, Result (35 tests)
-│   ├── test_modules.py        # BaseModule, Loader, Adapter (31 tests)
-│   ├── test_builtin_modules.py# Built-in modules (35 tests)
-│   ├── test_runner.py         # Runner, Playbook, conditions (52 tests)
-│   └── test_cli.py            # CLI commands (28 tests)
-├── pyproject.toml             # Build config
+│   └── deploy.yml             # Пример плейбука выгрузки ПО
+├── tests/                     # 197 тестов
+│   ├── test_engine.py         # Context, Template, Result (35 тестов)
+│   ├── test_modules.py        # BaseModule, Loader, Adapter (31 тест)
+│   ├── test_builtin_modules.py# Встроенные модули (35 тестов)
+│   ├── test_runner.py         # Runner, Playbook, условия (52 теста)
+│   ├── test_cli.py            # CLI-команды (28 тестов)
+│   └── test_integration.py    # E2E интеграционные тесты (16 тестов)
+├── pyproject.toml             # Конфигурация сборки
 └── README.md
 ```
 
-## CLI Reference
+---
+
+## Справочник CLI
 
 ```
-flowtask run <playbook> [options]
+flowtask run <плейбук> [опции]
 
-Options:
-  -n, --dry-run           Preview without executing
-  -v, --verbose           DEBUG-level output
-  -i, --inventory DIR     Override inventory directory
-  -l, --limit NAME        Only run tasks matching substring
-  --tags TAG [TAG ...]    Only run tasks with these tags
-  --skip-tags TAG [TAG]   Skip tasks with these tags
-  --continue-on-error     Continue after task errors
+Опции:
+  -n, --dry-run           Предпросмотр без выполнения
+  -v, --verbose           Вывод уровня DEBUG
+  -i, --inventory DIR     Переопределить каталог inventory
+  -l, --limit ИМЯ        Выполнить только задачи, содержащие подстроку
+  --tags ТЕГ [ТЕГ ...]   Выполнить только задачи с указанными тегами
+  --skip-tags ТЕГ [ТЕГ]  Пропустить задачи с указанными тегами
+  --continue-on-error     Продолжать выполнение после ошибок задач
 
-flowtask validate <playbook> [-i DIR]
-flowtask list-modules [-v]
-flowtask version
+flowtask validate <плейбук> [-i DIR]     Проверить плейбук
+flowtask list-modules [-v]               Список доступных модулей
+flowtask version                         Версия
 ```
 
-## Playbook Format
+### Коды возврата
+
+| Код | Значение |
+|-----|----------|
+| `0` | Успешное выполнение |
+| `1` | Ошибка (в плейбуке, модуле, валидации) |
+| `130` | Прервано пользователем (Ctrl+C) |
+
+---
+
+## Формат плейбука
 
 ```yaml
-name: "My Playbook"
-inventory: inventory/        # path to inventory directory
+name: "Мой плейбук"
+inventory: inventory/        # путь к каталогу inventory
 
-vars:                        # playbook-level variables (override inventory)
+vars:                        # переменные уровня плейбука (перекрывают inventory)
   env: "production"
 
 tasks:
-  - name: "Task description"
-    module: copy             # module name
-    params:                  # module parameters (template support)
+  - name: "Описание задачи"
+    module: copy             # имя модуля
+    params:                  # параметры модуля (поддерживается подстановка шаблонов)
       src: "/path/src"
       dest: "{{ vars.out_dir }}/{{ today }}/"
     when: success            # success | failure | always | changed | bool
-    register: result_var     # save result to context
-    ignore_errors: false     # continue on error
-    tags: [files, sync]      # for filtering
+    register: result_var     # сохранить результат в контекст
+    ignore_errors: false     # продолжить при ошибке
+    tags: [files, sync]      # для фильтрации --tags / --skip-tags
 ```
 
-### Task Options
+### Параметры задачи
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `name` | string | module name | Task display name |
-| `module` | string | **required** | Module to execute |
-| `params` | dict | `{}` | Parameters passed to module |
-| `when` | string/bool | `None` | Conditional: `success`, `failure`, `always`, `changed`, or bool |
-| `register` | string | `None` | Save result to context under this key |
-| `ignore_errors` | bool | `false` | Continue playbook on task error |
-| `tags` | list | `[]` | Tags for `--tags` / `--skip-tags` filtering |
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `name` | строка | имя модуля | Отображаемое имя задачи |
+| `module` | строка | **обязательный** | Модуль для выполнения |
+| `params` | словарь | `{}` | Параметры, передаваемые в модуль |
+| `when` | строка/bool | `None` | Условие: `success`, `failure`, `always`, `changed` или bool |
+| `register` | строка | `None` | Сохранить результат в контекст под этим ключом |
+| `ignore_errors` | bool | `false` | Продолжать выполнение плейбука при ошибке задачи |
+| `tags` | список | `[]` | Теги для фильтрации `--tags` / `--skip-tags` |
 
-### When Conditions
+### Условия выполнения (when)
 
-The `when` field controls whether a task executes based on the **previous** task's result:
+Поле `when` определяет, будет ли задача выполнена, в зависимости от результата **предыдущей** задачи:
 
-- `success` — run only if previous task succeeded (default for first task)
-- `failure` — run only if previous task failed
-- `changed` — run only if previous task made changes
-- `always` — always run regardless of previous result
-- `true` / omitted — always run
-- `false` — never run
+| Значение | Поведение |
+|----------|-----------|
+| `success` | Выполнить, если предыдущая задача завершилась успешно (для первой задачи — всегда) |
+| `failure` | Выполнить только если предыдущая задача завершилась с ошибкой |
+| `changed` | Выполнить только если предыдущая задача внесла изменения |
+| `always` | Всегда выполнять, независимо от результата предыдущей задачи |
+| `true` / не указано | Всегда выполнять |
+| `false` | Никогда не выполнять |
 
-## Built-in Modules
+---
+
+## Встроенные модули
 
 ### copy
 
-Copy files and directories. Supports glob patterns.
+Копирование файлов и директорий. Поддерживает glob-паттерны.
 
 ```yaml
-- name: "Copy files"
+- name: "Копирование файлов"
   module: copy
   params:
-    src: "/data/source/**"     # Required. Path or glob pattern
-    dest: "/backup/"           # Required. Destination
-    overwrite: true            # Default: true
-    recursive: true            # Default: true
+    src: "/data/source/**"     # Обязательный. Путь или glob-паттерн
+    dest: "/backup/"           # Обязательный. Куда копировать
+    overwrite: true            # По умолчанию: true
+    recursive: true            # По умолчанию: true
 ```
 
 ### move
 
-Move/rename files and directories. Supports glob patterns.
+Перемещение и переименование файлов и директорий. Поддерживает glob-паттерны.
 
 ```yaml
-- name: "Move logs"
+- name: "Перемещение логов"
   module: move
   params:
-    src: "/app/logs/*.log"     # Required. Path or glob
-    dest: "/archive/logs/"     # Required. Destination
-    overwrite: false           # Default: false
+    src: "/app/logs/*.log"     # Обязательный. Путь или glob
+    dest: "/archive/logs/"     # Обязательный. Куда переместить
+    overwrite: false           # По умолчанию: false
 ```
 
 ### delete
 
-Delete files and directories. Supports glob patterns.
+Удаление файлов и директорий. Поддерживает glob-паттерны.
 
 ```yaml
-- name: "Clean temp files"
+- name: "Очистка временных файлов"
   module: delete
   params:
-    path: "/tmp/cache/**"      # Required. Path or glob
-    recursive: true            # Default: true
-    force: true                # Default: false (ignore nonexistent)
+    path: "/tmp/cache/**"      # Обязательный. Путь или glob
+    recursive: true            # По умолчанию: true
+    force: true                # По умолчанию: false (игнорировать несуществующие)
 ```
 
 ### archive
 
-Create archives in zip, tar.gz, or tar.xz format.
+Создание архивов в форматах zip, tar.gz или tar.xz.
 
 ```yaml
-- name: "Create backup archive"
+- name: "Создание резервной копии"
   module: archive
   params:
-    src: "/data/backup/"       # Required. Source path
-    format: "tar.gz"           # Default: "zip". Options: zip, tar.gz, tar.xz
-    name: "backup_{{ today }}" # Default: auto-generated with timestamp
-    dest_dir: "/archives/"     # Default: parent of src
+    src: "/data/backup/"       # Обязательный. Исходный путь
+    format: "tar.gz"           # По умолчанию: "zip". Варианты: zip, tar.gz, tar.xz
+    name: "backup_{{ today }}" # По умолчанию: автогенерация с меткой времени
+    dest_dir: "/archives/"     # По умолчанию: родительский каталог src
 ```
 
 ### mount_smb
 
-Mount SMB/CIFS share via `mount.cifs`.
+Монтирование SMB/CIFS-ресурса через `mount.cifs`.
 
 ```yaml
-- name: "Mount SMB"
+- name: "Монтирование SMB"
   module: mount_smb
   params:
-    server: "{{ vars.smb_server }}"    # Required. e.g. "192.168.0.8"
-    share: "{{ vars.smb_share }}"      # Required. e.g. "box_delta_bin"
-    mount_point: "/mnt/smb"            # Default: "/mnt/smb"
-    user: "{{ secrets.smb_user }}"     # Default: "" (guest)
-    password: "{{ secrets.smb_pass }}" # Default: ""
-    domain: ""                          # Default: ""
-    version: "3.0"                      # Default: "3.0"
+    server: "{{ vars.smb_server }}"    # Обязательный. Например: "192.168.0.8"
+    share: "{{ vars.smb_share }}"      # Обязательный. Например: "box_delta_bin"
+    mount_point: "/mnt/smb"            # По умолчанию: "/mnt/smb"
+    username: "{{ secrets.smb_user }}" # По умолчанию: "" (гостевой доступ)
+    password: "{{ secrets.smb_pass }}" # По умолчанию: ""
+    domain: ""                          # По умолчанию: ""
+    version: "3.0"                      # По умолчанию: "3.0"
 ```
 
 ### umount_smb
 
-Unmount SMB/CIFS share.
+Размонтирование SMB/CIFS-ресурса.
 
 ```yaml
-- name: "Unmount SMB"
+- name: "Размонтирование SMB"
   module: umount_smb
   params:
-    mount_point: "/mnt/smb"   # Required
-    lazy: false               # Default: false. Use -l if busy
+    mount_point: "/mnt/smb"   # Обязательный
+    lazy: false               # По умолчанию: false. Использовать -l если занят
 ```
 
-## Template Engine
+---
 
-Templates use `{{ }}` syntax and are resolved from context:
+## Движок шаблонов
+
+Шаблоны используют синтаксис `{{ }}` и разрешаются из контекста выполнения:
 
 ```
-{{ vars.key }}          → from inventory/vars.yml
-{{ secrets.key }}       → from inventory/secrets.yml
-{{ today }}             → current date (2026-04-03)
-{{ now }}               → current datetime (20260403_143000)
-{{ timestamp }}         → unix epoch
-{{ key }}               → auto-lookup: builtins → vars → secrets
+{{ vars.key }}          → из inventory/vars.yml (или vars.local.yml)
+{{ secrets.key }}       → из inventory/secrets.yml
+{{ today }}             → текущая дата (2026-04-03)
+{{ now }}               → текущие дата/время (20260403_143000)
+{{ timestamp }}         → unix-epoch (секунды)
+{{ key }}               → автопоиск: builtins → vars → secrets
 ```
 
-Secrets are **masked** in all log output (shown as `***`).
+Секреты **маскируются** во всех логах — вместо реального значения отображается `***`. Это защищает пароли и токены от случайной утечки в консоль или файлы журнала.
 
-## Inventory
+---
 
-The `inventory/` directory contains configuration files:
+## Inventory (инвентарь)
 
-| File | Committed | Description |
-|------|-----------|-------------|
-| `vars.yml` | Yes | Base variables (server addresses, paths) |
-| `vars.local.yml` | **No** (.gitignore) | Local overrides (machine-specific) |
-| `secrets.yml` | **No** (.gitignore) | Secrets (passwords, tokens) |
-| `secrets.yml.example` | Yes | Template for secrets |
-| `vars.local.yml.example` | Yes | Template for local overrides |
+Каталог `inventory/` содержит конфигурационные файлы:
 
-Variables are merged: `vars.yml` → `vars.local.yml` (last wins). Playbook-level `vars` override both.
+| Файл | В git | Описание |
+|------|-------|----------|
+| `vars.yml` | Да | Базовые переменные (адреса серверов, пути, списки папок) |
+| `vars.local.yml` | **Нет** (.gitignore) | Локальные переопределения (специфичные для машины) |
+| `secrets.yml` | **Нет** (.gitignore) | Секреты (пароли, токены) |
+| `secrets.yml.example` | Да | Шаблон файла секретов |
+| `vars.local.yml.example` | Да | Шаблон локальных переопределений |
 
-## Writing Custom Modules
+### Порядок слияния переменных
 
-### Python Module
+Переменные объединяются каскадно — последний источник побеждает:
 
-Create a file in `modules/` (or `flowtask/modules/` for built-in):
+```
+vars.yml → vars.local.yml → vars (уровня плейбука)
+```
+
+Глубокое слияние (deep merge) применяется для вложенных словарей: если оба файла содержат ключ `rsync_filter_excludes`, их списки объединяются, а не перезаписываются целиком.
+
+Секреты загружаются отдельно из `secrets.yml` и доступны через пространство `secrets.*` в шаблонах.
+
+---
+
+## Написание собственных модулей
+
+### Python-модуль
+
+Создайте файл в `modules/` (или `flowtask/modules/` для встроенных модулей):
 
 ```python
 from flowtask.modules.base import BaseModule, param
 from flowtask.engine.result import ModuleResult
 
 class MyModule(BaseModule):
-    """Module description."""
+    """Описание модуля."""
 
-    name = "my_module"           # Optional, auto-generated if empty
-    description = "Does something useful"
+    name = "my_module"           # Опционально, автогенерация если пустое
+    description = "Делает что-то полезное"
 
-    # Parameters via @param descriptor
-    src: str = param(required=True, help="Source path")
-    dest: str = param(default="/tmp/", help="Destination")
+    # Объявление параметров через дескриптор @param
+    src: str = param(required=True, help="Исходный путь")
+    dest: str = param(default="/tmp/", help="Путь назначения")
     verbose: bool = param(default=False)
 
     def run(self) -> ModuleResult:
-        """Execute the module."""
-        # self._dry_run and self._verbose are available
-        # self._raw_params contains original params dict
+        """Выполнение модуля."""
+        # self._dry_run и self._verbose доступны внутри
+        # self._raw_params содержит исходный словарь параметров
 
-        # Do work...
-        return ModuleResult.changed("Done", data={"items": 5})
+        # ... логика ...
+
+        return ModuleResult.changed("Готово", data={"items": 5})
 ```
 
-### Bash Module
+Класс `BaseModule` обеспечивает:
+- Автоматическую валидацию обязательных параметров через `validate_params()`
+- Дескриптор `@param` с полями `required`, `default`, `help`
+- Метод `execute()` с поддержкой dry-run (вызывается раннером)
+- Свойство `param_schema` для получения схемы параметров (документация, CLI)
+- Автоматическое маскирование параметров с `pass`/`secret` в логах
 
-Create a `.sh` file in `modules/bash/`:
+### Bash-модуль
+
+Создайте `.sh` файл в `modules/bash/`:
 
 ```bash
 #!/bin/bash
 set -euo pipefail
 
-# Read JSON from stdin
+# Чтение JSON из stdin
 input=$(cat)
 src=$(echo "$input" | python3 -c "import sys,json; print(json.load(sys.stdin)['params']['src'])")
 dry_run=$(echo "$input" | python3 -c "import sys,json; print(json.load(sys.stdin).get('dry_run',False))")
 
-# Log to stderr (captured by FlowTask logger)
->&2 echo "[INFO] Processing: $src"
+# Логи на stderr (перехватываются логгером FlowTask)
+>&2 echo "[INFO] Обработка: $src"
 
-# Dry run
+# Dry-run режим
 if [ "$dry_run" = "True" ]; then
-    echo '{"status":"ok","message":"[DRY-RUN] Would process '$src'","changed":false}'
+    echo '{"status":"ok","message":"[DRY-RUN] Обработал бы '$src'","changed":false}'
     exit 0
 fi
 
-# Do work...
+# ... выполнение ...
 
-# Return JSON result on stdout
-echo '{"status":"ok","message":"Processed successfully","changed":true,"data":{"files":3}}'
+# JSON-результат на stdout
+echo '{"status":"ok","message":"Обработано успешно","changed":true,"data":{"files":3}}'
 ```
 
-**Protocol:**
-- **stdin**: `{"params": {...}, "dry_run": bool, "verbose": bool}`
-- **stdout**: `{"status": "ok|error|skipped", "message": "...", "changed": bool, "data": {...}}`
-- **stderr**: forwarded to FlowTask logger
+#### JSON-протокол Bash-модулей
 
-## Development
+Каждый Bash-модуль взаимодействует с FlowTask через JSON:
+
+| Направление | Формат | Описание |
+|-------------|--------|----------|
+| **stdin** | `{"params": {...}, "dry_run": bool, "verbose": bool}` | Входные параметры от раннера |
+| **stdout** | `{"status": "ok\|error\|skipped", "message": "...", "changed": bool, "data": {...}}` | Результат выполнения |
+| **stderr** | произвольный текст | Логи (передаются в логгер FlowTask) |
+
+---
+
+## Пример: полный плейбук выгрузки ПО
+
+В комплекте идёт `playbooks/deploy.yml` — реальный плейбук для выгрузки дистрибутивов с SMB-сервера:
+
+```yaml
+name: "Deploy — выгрузка ПО с SMB"
+inventory: inventory/
+
+vars:
+  out_dir: "{{ vars.out_base }}/{{ today }}"
+
+tasks:
+  # 1. Монтирование SMB
+  - name: "Mount SMB share"
+    module: mount_smb
+    params:
+      server: "{{ vars.smb_server }}"
+      share: "{{ vars.smb_share }}"
+      mount_point: "{{ vars.smb_mount_point }}"
+      username: "{{ secrets.smb_user }}"
+      password: "{{ secrets.smb_pass }}"
+    tags: [smb, mount]
+
+  # 2. Синхронизация папок
+  - name: "Sync folders from SMB"
+    module: smb_mount
+    params:
+      server: "{{ vars.smb_server }}"
+      share: "{{ vars.smb_share }}"
+      path: "{{ vars.smb_path }}"
+      mount_point: "{{ vars.smb_mount_point }}"
+      dest: "{{ vars.out_dir }}"
+      folders:
+        {% for folder in vars.download_folders %}
+        - "{{ folder }}"
+        {% endfor %}
+    tags: [sync, download]
+    register: sync_result
+
+  # 3. Создание архива
+  - name: "Create archive"
+    module: archive
+    params:
+      src: "{{ vars.out_dir }}"
+      dest: "{{ vars.out_base }}/deploy_{{ today }}.tar.gz"
+      format: "tar.gz"
+    tags: [archive]
+    when: success
+
+  # 4. Размонтирование (всегда, даже при ошибках)
+  - name: "Unmount SMB share"
+    module: umount_smb
+    params:
+      mount_point: "{{ vars.smb_mount_point }}"
+    tags: [smb, umount]
+    when: always
+```
+
+---
+
+## Архитектура
+
+FlowTask построен по модульной архитектуре с чётким разделением ответственности:
+
+```
+CLI (cli.py)
+  │
+  ▼
+Runner (runner.py)  ◄── оркестратор, читает плейбук
+  │
+  ├──► Context (context.py)  ◄── загрузка vars + secrets + builtins
+  │
+  ├──► Template (template.py)  ◄── подстановка {{ }} в параметры
+  │
+  └──► ModuleLoader (module_loader.py)  ◄── автообнаружение модулей
+        │
+        ├──► Python-модуль (BaseModule subclass)  ◄── нативное выполнение
+        │
+        └──► BashModuleAdapter (bash_adapter.py)  ◄── JSON-протокол
+             └──► bash-скрипт (stdin/stdout)
+```
+
+### Контракт результатов
+
+Все модули возвращают `ModuleResult` — унифицированный результат выполнения:
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `status` | строка | `ok`, `error`, `skipped` |
+| `message` | строка | Человекочитаемое описание |
+| `changed` | bool | Были ли внесены изменения (идемпотентность) |
+| `data` | словарь | Дополнительные данные для последующих задач |
+
+---
+
+## Разработка
 
 ```bash
-# Install in dev mode
+# Установка в режиме разработки
 pip install -e ".[dev]"
 
-# Run all tests
+# Запуск всех тестов
 pytest tests/ -v
 
-# Run specific test file
+# Запуск конкретного файла тестов
 pytest tests/test_runner.py -v
 
-# Run with coverage
+# Запуск с покрытием кода
 pytest tests/ --cov=flowtask
+
+# Запуск только интеграционных тестов
+pytest tests/test_integration.py -v
 ```
 
-## License
+### Запуск тестов с фильтрами
+
+```bash
+# Только тесты с ключевым словом "template"
+pytest tests/ -k template -v
+
+# Только тесты с ключевым словом "copy"
+pytest tests/ -k copy -v
+
+# Остановка при первом падении
+pytest tests/ -x
+```
+
+---
+
+## Зависимости
+
+- Python >= 3.10
+- PyYAML >= 6.0
+
+Опционально (для разработки):
+- pytest >= 7.0
+- pytest-cov >= 4.0
+
+---
+
+## Лицензия
 
 MIT
