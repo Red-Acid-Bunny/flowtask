@@ -371,6 +371,14 @@ class TestWhenConditions:
         should, _ = runner._should_run(task)
         assert should is True
 
+    def test_when_success_after_changed(self, context, mock_module_cls):
+        """changed тоже считается success."""
+        runner = self._make_runner(context, mock_module_cls)
+        runner._prev_result = ModuleResult.changed("updated")
+        task = TaskDef(name="after_changed", module="mock_module", when="success")
+        should, _ = runner._should_run(task)
+        assert should is True
+
 
 # ============================================================
 # Runner — filter tasks

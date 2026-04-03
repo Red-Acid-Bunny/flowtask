@@ -395,7 +395,8 @@ class Runner:
             if when_lower == "success":
                 if self._prev_result is None:
                     return True, ""  # первая задача → success
-                if self._prev_result.is_ok:
+                # success = не error и не skipped (changed тоже успех)
+                if not self._prev_result.is_error and not self._prev_result.is_skipped:
                     return True, ""
                 return False, f"when=success (prev status: {self._prev_result.status})"
 
