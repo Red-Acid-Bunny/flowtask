@@ -28,7 +28,9 @@ class MountSmb(BaseModule):
     version: str = param(default="3.0", help="SMB version (1.0, 2.0, 3.0, 3.1.1)")
 
     def run(self) -> ModuleResult:
-        mp = Path(self.mount_point)
+        # Всегда резолвим в абсолютный путь — относительные пути
+        # под sudo резолвятся иначе (от /root/, не от CWD проекта)
+        mp = Path(self.mount_point).resolve()
 
         # Проверка — уже смонтирована?
         if mp.is_mount():

@@ -19,7 +19,8 @@ class UmountSmb(BaseModule):
     lazy: bool = param(default=False, help="Lazy unmount (-l) if busy")
 
     def run(self) -> ModuleResult:
-        mp = Path(self.mount_point)
+        # Всегда резолвим в абсолютный путь
+        mp = Path(self.mount_point).resolve()
 
         if not mp.is_mount():
             return ModuleResult.ok(
