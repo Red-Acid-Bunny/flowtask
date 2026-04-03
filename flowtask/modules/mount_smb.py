@@ -57,14 +57,15 @@ class MountSmb(BaseModule):
         logger.info("Mounting //%s/%s → %s", self.server, self.share, mp)
 
         try:
+            import os
             env = None
             if self.password and self.user:
-                # Передаём пароль через PASSWD (не через командную строку)
-                import os
+                # Передаём пароль через переменную окружения PASSWD
                 env = {**os.environ, "PASSWD": self.password}
 
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30, env=env,
+                cmd, capture_output=True, text=True, timeout=30,
+                env=env, stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired:
             return ModuleResult.error(f"Mount timed out (30s)")
