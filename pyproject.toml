@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "flowtask"
+version = "0.1.0"
+description = "Task runner for file operations — YAML playbooks with Python and Bash modules"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "FlowTask Team"}
+]
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+flowtask = "flowtask.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["flowtask*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
