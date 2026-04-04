@@ -1,10 +1,10 @@
 #!/bin/bash
-# flowtask bash module: smb_sync
-# Монтирует SMB-ресурс (если не смонтирован) и синхронизирует папки через rsync
+# flowtask bash module: rsync
+# Синхронизирует папки через rsync
 #
 # Input (stdin): {"params": {...}, "dry_run": bool}
 #   Параметры:
-#     mount_point — локальная точка монтирования (по умолчанию /mnt/smb)
+#     src         — исходная директория (обязательный)
 #     dest        — локальная директория назначения (обязательный)
 #     folders     — список папок для выгрузки (JSON-массив строк)
 #     excludes    — список исключений для rsync (JSON-массив строк)
@@ -28,7 +28,6 @@ read_flag() {
 
 src=$(read_param "src" "")
 dest=$(read_param "dest" "")
-user=$(read_param "user" "")
 dry_run=$(read_flag "dry_run" "false")
 
 # Резолвим в абсолютные пути (относительные ломаются под sudo)
@@ -40,8 +39,26 @@ folders_json=$(echo "$input" | python3 -c "import sys,json; print(json.dumps(jso
 excludes_json=$(echo "$input" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['params'].get('excludes',[])))")
 
 # =============================================
+# Проверка зависимостей
+# =============================================
+if ! command -v rsync &>/dev/null; then
+  echo '{"status":"error","message":"rsync is not installed or not in PATH"}'
+  exit 1
+fi
+
+# =============================================
 # Валидация
 # =============================================
+if [ -z "$src" ]; then
+  echo '{"status":"error","message":"src (source directory) is required"}'
+  exit 1
+fi
+
+if [ ! -d "$src" ]; then
+  echo "{\"status\":\"error\",\"message\":\"src directory not found: ${src}\"}"
+  exit 1
+fi
+
 if [ -z "$dest" ]; then
   echo '{"status":"error","message":"dest (destination directory) is required"}'
   exit 1
@@ -72,6 +89,14 @@ synced=0
 failed=0
 sync_details=""
 exclude_file=""
+rsync_out=""
+
+# Cleanup temp files on exit
+cleanup() {
+  [ -n "$exclude_file" ] && [ -f "$exclude_file" ] && rm -f "$exclude_file"
+  [ -n "$rsync_out" ] && [ -f "$rsync_out" ] && rm -f "$rsync_out"
+}
+trap cleanup EXIT
 
 mkdir -p "$dest"
 
@@ -81,6 +106,8 @@ if [ "$exclude_count" -gt 0 ]; then
   exclude_file=$(mktemp /tmp/flowtask_excl_XXXXXX)
   echo "$excludes_json" | python3 -c "import sys,json; [print(x) for x in json.load(sys.stdin)]" >"$exclude_file"
 fi
+
+rsync_out=$(mktemp /tmp/flowtask_rsync_XXXXXX)
 
 >&2 echo "[INFO] Source base: $src_base"
 >&2 echo "[INFO] Dest: $dest"
@@ -101,16 +128,15 @@ while IFS= read -r folder; do
   # Rsync (без eval, без pipe — надёжная обработка exit code)
   rsync_exit=0
   if [ -n "$exclude_file" ]; then
-    rsync -av --delete --exclude-from="$exclude_file" "$src_path" "$dest/" >/tmp/flowtask_rsync_out 2>&1 || rsync_exit=$?
+    rsync -av --delete --exclude-from="$exclude_file" "$src_path" "$dest/" >"$rsync_out" 2>&1 || rsync_exit=$?
   else
-    rsync -av --delete "$src_path" "$dest/" >/tmp/flowtask_rsync_out 2>&1 || rsync_exit=$?
+    rsync -av --delete "$src_path" "$dest/" >"$rsync_out" 2>&1 || rsync_exit=$?
   fi
 
   # Логируем вывод rsync
   while IFS= read -r line; do
     >&2 echo "[rsync] $line"
-  done </tmp/flowtask_rsync_out
-  rm -f /tmp/flowtask_rsync_out
+  done <"$rsync_out"
 
   if [ "$rsync_exit" -eq 0 ]; then
     sync_details="${sync_details}${folder}:ok "

@@ -3,7 +3,7 @@
 # Локальные переопределения — в vars.local.yml (не коммитится)
 
 # rsync
-src_path: "example/test"
+src_path: "demo/test"
 rsync_user: ""
 rsync_module: ""
 rsync_filter_excludes:
