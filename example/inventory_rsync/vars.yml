@@ -1,0 +1,22 @@
+# FlowTask — переменные окружения
+# Эти переменные используются в playbook'ах через {{ vars.key }}
+# Локальные переопределения — в vars.local.yml (не коммитится)
+
+# rsync
+src_path: "example/test"
+rsync_user: ""
+rsync_module: ""
+rsync_filter_excludes:
+  - "*.tmp"
+  - "*.bak"
+  - "*.log"
+  - "Thumbs.db"
+  - ".DS_Store"
+
+# Выходная директория
+out_base: "./out"
+
+# Список папок для выгрузки
+download_folders:
+  - "test1"
+  - "test2"

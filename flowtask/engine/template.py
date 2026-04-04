@@ -30,6 +30,7 @@ _SECRET_NAMESPACES = {"secrets"}
 
 class TemplateError(Exception):
     """Ошибка в шаблоне."""
+
     pass
 
 
@@ -85,9 +86,22 @@ class Template:
         """Обработать любое значение (dict, list, str, или как есть)."""
         return self._render_value(data)
 
+    # Regex для полного совпадения строки с единственным шаблоном
+    _SINGLE_TEMPLATE = re.compile(r"^\s*\{\{\s*(.+?)\s*\}\}\s*$")
+
     def _render_value(self, value: Any) -> Any:
         """Рекурсивная обработка значения."""
         if isinstance(value, str):
+            # Если вся строка — единственный шаблон {{ key }},
+            # и значение — не строка (list, dict, int...), вернуть как есть.
+            # Это позволяет передавать массивы и объекты из vars/secrets
+            # без превращения в Python-repr строку.
+            m = self._SINGLE_TEMPLATE.match(value)
+            if m:
+                key = m.group(1).strip()
+                resolved = self._resolve(key)
+                if resolved is not None and not isinstance(resolved, str):
+                    return resolved
             return self.render(value)
         elif isinstance(value, dict):
             return self.render_dict(value)
@@ -114,7 +128,9 @@ class Template:
                 logger.debug("Template: resolved secret '%s' → ***", key)
                 return value
             else:
-                logger.warning("Template: unknown namespace '%s' in '%s'", namespace, key)
+                logger.warning(
+                    "Template: unknown namespace '%s' in '%s'", namespace, key
+                )
                 return None
 
         # Без namespace — автопоиск
@@ -127,6 +143,7 @@ class Template:
             safe_log("server={{ secrets.password }}")
             → "server=***"
         """
+
         def _mask(match: re.Match) -> str:
             key = match.group(1).strip()
             if key.startswith("secrets."):
