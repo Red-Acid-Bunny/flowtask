@@ -344,8 +344,6 @@ class Runner:
             records=records,
         )
 
-        # Выводим отчёт
-        logger.info(result.summary())
         return result
 
     # --- Внутренние методы ---

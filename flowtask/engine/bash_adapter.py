@@ -108,7 +108,7 @@ class BashModuleAdapter:
         stderr = proc.stderr.strip()
         if stderr:
             for line in stderr.splitlines():
-                logger.info("[%s] %s", self.name, line)
+                logger.debug("[%s] %s", self.name, line)
 
         # stdout → JSON результат
         stdout = proc.stdout.strip()
