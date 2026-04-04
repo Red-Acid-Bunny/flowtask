@@ -3,6 +3,7 @@
 # Локальные переопределения — в vars.local.yml (не коммитится)
 
 # SMB-сервер
-smb_server: "192.168.0.8"
-smb_share: "data"
-smb_mount_point: "/mnt/smb"
+smb_server: "127.0.0.1"
+smb_share: "smb_test"
+smb_port: 1445
+smb_mount_point: "/tmp/smb_mount"

@@ -71,7 +71,8 @@ fi
 if ! python3 -c "
 import socket, sys
 try:
-    socket.create_connect(('$server', $port), timeout=5)
+    s = socket.create_connection(('$server', $port), timeout=5)
+    s.close()
     sys.exit(0)
 except Exception as e:
     print(f'Connection failed: {e}', file=sys.stderr)

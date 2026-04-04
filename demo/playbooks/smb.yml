@@ -21,6 +21,7 @@ pre_tasks:
     params:
       server: "{{ vars.smb_server }}"
       share: "{{ vars.smb_share }}"
+      port: "{{ vars.smb_port }}"
       mount_point: "{{ vars.smb_mount_point }}"
       user: "{{ secrets.smb_user }}"
       password: "{{ secrets.smb_pass }}"
