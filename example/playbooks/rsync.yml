@@ -1,0 +1,31 @@
+# FlowTask — пример использования модуля rsync
+#
+# Использование:
+#   flowtask run example/playbooks/rsync.yml
+#   flowtask run example/playbooks/rsync.yml --dry-run        # предпросмотр
+#   flowtask run example/playbooks/rsync.yml --verbose        # подробный вывод
+#   flowtask run example/playbooks/rsync.yml --limit mount    # только задачу mount
+#
+# Предварительно:
+#   1. При необходимости создайте inventory/vars.local.yml для локальных переопределений
+
+name: "rsync - пример выгрузки"
+inventory: example/inventory_rsync/
+
+# Переменные уровня playbook (перекрывают inventory/vars.yml)
+vars:
+  out_dir: "{{ vars.out_base }}/{{ today }}"
+
+tasks:
+  # ============================================
+  # 2. Выгрузка папок через rsync (Bash-модуль)
+  # ============================================
+  - name: "Sync folders"
+    module: rsync
+    params:
+      src: "{{ vars.src_path }}"
+      dest: "{{ vars.out_dir }}"
+      folders: "{{ vars.download_folders }}"
+      excludes: "{{ vars.rsync_filter_excludes }}"
+    tags: [sync, download]
+    register: sync_result
