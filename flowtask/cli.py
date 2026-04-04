@@ -43,16 +43,11 @@ def _setup_logging(verbose: bool = False) -> None:
     handler.setLevel(level)
     handler.setFormatter(formatter)
 
-    # Корневой логгер flowtask
+    # Логгер flowtask
     root = logging.getLogger("flowtask")
     root.setLevel(level)
     root.handlers.clear()
     root.addHandler(handler)
-
-    # Не пускаем логи от других библиотек (если есть)
-    logging.getLogger("").handlers.clear()
-    logging.getLogger("").addHandler(handler)
-    logging.getLogger("").setLevel(logging.WARNING)
 
 
 # ============================================================

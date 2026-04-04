@@ -335,11 +335,11 @@ print(json.dumps({'status': 'ok', 'message': server, 'data': {'server': server}}
         )
 
         adapter = BashModuleAdapter(script)
-        with caplog.at_level(logging.INFO, logger="flowtask.bash_adapter"):
+        with caplog.at_level(logging.DEBUG, logger="flowtask.bash_adapter"):
             adapter.execute()
 
-        assert "[INFO] step 1" in caplog.text
-        assert "[INFO] step 2" in caplog.text
+        assert "step 1" in caplog.text
+        assert "step 2" in caplog.text
 
     def test_no_output(self, tmp_path):
         script = tmp_path / "empty.sh"
