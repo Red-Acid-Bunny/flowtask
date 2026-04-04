@@ -30,7 +30,6 @@ _SECRET_NAMESPACES = {"secrets"}
 
 class TemplateError(Exception):
     """Ошибка в шаблоне."""
-
     pass
 
 
@@ -143,7 +142,6 @@ class Template:
             safe_log("server={{ secrets.password }}")
             → "server=***"
         """
-
         def _mask(match: re.Match) -> str:
             key = match.group(1).strip()
             if key.startswith("secrets."):

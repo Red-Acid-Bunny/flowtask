@@ -2,5 +2,5 @@
 # Этот файл НЕ коммитится (в .gitignore)
 # Скопируйте и измените под свою среду
 
-# smb_server: "192.168.0.100"
+# src_path: "/path/to/source"
 # out_base: "/mnt/d/flowtask-out"
