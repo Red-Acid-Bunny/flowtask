@@ -1,0 +1,8 @@
+# FlowTask — переменные для SMB-примера
+# Эти переменные используются в playbook'ах через {{ vars.key }}
+# Локальные переопределения — в vars.local.yml (не коммитится)
+
+# SMB-сервер
+smb_server: "192.168.0.8"
+smb_share: "data"
+smb_mount_point: "/mnt/smb"

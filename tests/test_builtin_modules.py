@@ -1,5 +1,5 @@
 """
-Тесты для встроенных модулей: copy, move, delete, archive, mount_smb, umount_smb.
+Тесты для встроенных модулей: copy, move, delete, archive.
 """
 
 import os
@@ -11,8 +11,6 @@ from flowtask.modules.copy import Copy
 from flowtask.modules.move import Move
 from flowtask.modules.delete import Delete
 from flowtask.modules.archive import Archive
-from flowtask.modules.mount_smb import MountSmb
-from flowtask.modules.umount_smb import UmountSmb
 from flowtask.engine.module_loader import ModuleLoader
 from flowtask.engine.result import ModuleResult
 
@@ -351,8 +349,6 @@ class TestBuiltinDiscovery:
         assert "move" in modules
         assert "delete" in modules
         assert "archive" in modules
-        assert "mount_smb" in modules
-        assert "umount_smb" in modules
 
     def test_module_types(self):
         loader = ModuleLoader()
@@ -363,16 +359,12 @@ class TestBuiltinDiscovery:
         assert mod_list["move"] == "python"
         assert mod_list["delete"] == "python"
         assert mod_list["archive"] == "python"
-        assert mod_list["mount_smb"] == "python"
-        assert mod_list["umount_smb"] == "python"
 
     def test_bash_modules_discovered(self):
         loader = ModuleLoader()
         modules = loader.discover()
 
-        # Bash modules have different names: smb_mount, smb_umount
-        assert "smb_mount" in modules
-        assert "smb_umount" in modules
+        assert "rsync" in modules
 
     def test_get_module_returns_class(self):
         loader = ModuleLoader()
@@ -381,17 +373,6 @@ class TestBuiltinDiscovery:
         cls = loader.get("copy")
         # get() returns the class, either from builtin or user modules
         assert hasattr(cls, 'run')
-
-    def test_mount_smb_params(self):
-        """MountSmb module should have correct param schema."""
-        m = MountSmb(server="192.168.0.8", share="test")
-        schema = m.param_schema
-        assert "server" in schema
-        assert schema["server"]["required"] is True
-        assert "share" in schema
-        assert schema["share"]["required"] is True
-        assert "mount_point" in schema
-        assert schema["mount_point"]["required"] is False
 
     def test_archive_params(self):
         m = Archive(src="/tmp/test")

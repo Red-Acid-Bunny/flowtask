@@ -887,3 +887,205 @@ class TestPlaybookVars:
         assert result.total == 1
         # В dry-run параметр должен быть /custom/path (override)
         assert result.records[0].params["dest"] == "/custom/path"
+
+
+# ============================================================
+# Pre-tasks / Post-tasks
+# ============================================================
+
+class TestPrePostTasks:
+
+    def test_pre_tasks_run_before_tasks(self, tmp_path, tmp_inventory):
+        """pre_tasks выполняются до tasks."""
+        pb_data = {
+            "name": "Pre/Post Test",
+            "inventory": str(tmp_inventory),
+            "pre_tasks": [
+                {"name": "Pre 1", "module": "copy", "params": {"src": str(tmp_path / "x"), "dest": str(tmp_path / "y")}},
+            ],
+            "tasks": [
+                {"name": "Main 1", "module": "copy", "params": {"src": str(tmp_path / "x"), "dest": str(tmp_path / "z")}},
+            ],
+        }
+
+        pb = tmp_path / "test.yml"
+        pb.write_text(yaml.dump(pb_data))
+
+        runner = Runner(playbook_path=pb, dry_run=True)
+        result = runner.run()
+
+        assert result.total == 2
+        assert result.records[0].section == "pre_tasks"
+        assert result.records[0].name == "Pre 1"
+        assert result.records[1].section == "tasks"
+        assert result.records[1].name == "Main 1"
+
+    def test_post_tasks_run_after_tasks(self, tmp_path, tmp_inventory):
+        """post_tasks выполняются после tasks."""
+        pb_data = {
+            "name": "Pre/Post Test",
+            "inventory": str(tmp_inventory),
+            "tasks": [
+                {"name": "Main 1", "module": "copy", "params": {"src": str(tmp_path / "x"), "dest": str(tmp_path / "z")}},
+            ],
+            "post_tasks": [
+                {"name": "Post 1", "module": "copy", "params": {"src": str(tmp_path / "x"), "dest": str(tmp_path / "w")}},
+            ],
+        }
+
+        pb = tmp_path / "test.yml"
+        pb.write_text(yaml.dump(pb_data))
+
+        runner = Runner(playbook_path=pb, dry_run=True)
+        result = runner.run()
+
+        assert result.total == 2
+        assert result.records[0].section == "tasks"
+        assert result.records[1].section == "post_tasks"
+
+    def test_full_order_pre_tasks_tasks_post_tasks(self, tmp_path, tmp_inventory):
+        """Полный порядок: pre_tasks → tasks → post_tasks."""
+        pb_data = {
+            "name": "Full Order Test",
+            "inventory": str(tmp_inventory),
+            "pre_tasks": [
+                {"name": "Pre A", "module": "copy", "params": {"src": str(tmp_path / "x"), "dest": str(tmp_path / "y")}},
+            ],
+            "tasks": [
+                {"name": "Main A", "module": "copy", "params": {"src": str(tmp_path / "x"), "dest": str(tmp_path / "z")}},
+            ],
+            "post_tasks": [
+                {"name": "Post A", "module": "copy", "params": {"src": str(tmp_path / "x"), "dest": str(tmp_path / "w")}},
+            ],
+        }
+
+        pb = tmp_path / "test.yml"
+        pb.write_text(yaml.dump(pb_data))
+
+        runner = Runner(playbook_path=pb, dry_run=True)
+        result = runner.run()
+
+        assert result.total == 3
+        assert result.records[0].section == "pre_tasks"
+        assert result.records[1].section == "tasks"
+        assert result.records[2].section == "post_tasks"
+
+    def test_pre_tasks_error_stops_execution(self, tmp_path, tmp_inventory):
+        """Ошибка в pre_tasks останавливает выполнение."""
+        pb_data = {
+            "name": "Pre Error Test",
+            "inventory": str(tmp_inventory),
+            "pre_tasks": [
+                {"name": "Pre Fail", "module": "copy", "params": {"src": str(tmp_path / "nonexistent"), "dest": str(tmp_path / "y")}},
+            ],
+            "tasks": [
+                {"name": "Main", "module": "copy", "params": {"src": str(tmp_path / "x"), "dest": str(tmp_path / "z")}},
+            ],
+        }
+
+        pb = tmp_path / "test.yml"
+        pb.write_text(yaml.dump(pb_data))
+
+        runner = Runner(playbook_path=pb, stop_on_error=True)
+        result = runner.run()
+
+        assert result.failed > 0
+        assert result.records[-1].section == "pre_tasks"
+
+    def test_post_tasks_run_when_always(self, tmp_path, tmp_inventory):
+        """post_tasks с when=always выполняются даже при ошибках."""
+        pb_data = {
+            "name": "Post Always Test",
+            "inventory": str(tmp_inventory),
+            "tasks": [
+                {"name": "Main Fail", "module": "copy", "params": {"src": str(tmp_path / "nonexistent"), "dest": str(tmp_path / "z")}},
+            ],
+            "post_tasks": [
+                {"name": "Post Cleanup", "module": "copy", "when": "always", "params": {"src": str(tmp_path / "x"), "dest": str(tmp_path / "w")}},
+            ],
+        }
+
+        pb = tmp_path / "test.yml"
+        pb.write_text(yaml.dump(pb_data))
+
+        runner = Runner(playbook_path=pb, stop_on_error=False)
+        result = runner.run()
+
+        post_records = [r for r in result.records if r.section == "post_tasks"]
+        assert len(post_records) == 1
+        assert post_records[0].name == "Post Cleanup"
+
+    def test_validate_checks_all_sections(self, tmp_path, tmp_inventory):
+        """validate проверяет все секции задач."""
+        pb_data = {
+            "name": "Validate Test",
+            "inventory": str(tmp_inventory),
+            "pre_tasks": [
+                {"name": "Pre", "module": "nonexistent_module", "params": {}},
+            ],
+            "tasks": [
+                {"name": "Main", "module": "copy", "params": {"src": str(tmp_path / "x"), "dest": str(tmp_path / "y")}},
+            ],
+            "post_tasks": [
+                {"name": "Post", "module": "also_missing", "params": {}},
+            ],
+        }
+
+        pb = tmp_path / "test.yml"
+        pb.write_text(yaml.dump(pb_data))
+
+        runner = Runner(playbook_path=pb)
+        errors = runner.validate()
+
+        assert any("nonexistent_module" in e for e in errors)
+        assert any("also_missing" in e for e in errors)
+
+
+# ============================================================
+# Become (privilege escalation)
+# ============================================================
+
+class TestBecome:
+
+    def test_taskdef_become_default_false(self):
+        """become по умолчанию False."""
+        td = TaskDef(name="Test", module="test")
+        assert td.become is False
+
+    def test_taskdef_become_from_dict(self):
+        """become загружается из словаря."""
+        td = TaskDef.from_dict({"name": "Mount", "module": "smb_mount", "become": True})
+        assert td.become is True
+
+    def test_playbook_loads_pre_and_post_tasks(self, tmp_path):
+        """Playbook загружает pre_tasks и post_tasks."""
+        pb_data = {
+            "name": "Test",
+            "tasks": [
+                {"name": "Main", "module": "copy", "params": {"src": "/x", "dest": "/y"}},
+            ],
+            "pre_tasks": [
+                {"name": "Pre", "module": "smb_mount", "become": True, "params": {}},
+            ],
+            "post_tasks": [
+                {"name": "Post", "module": "smb_umount", "become": True, "when": "always", "params": {}},
+            ],
+        }
+
+        pb = tmp_path / "test.yml"
+        pb.write_text(yaml.dump(pb_data))
+
+        playbook = Playbook.from_file(pb)
+        assert len(playbook.pre_tasks) == 1
+        assert len(playbook.tasks) == 1
+        assert len(playbook.post_tasks) == 1
+        assert playbook.pre_tasks[0].become is True
+        assert playbook.post_tasks[0].become is True
+
+    def test_become_pass_passed_to_runner(self, tmp_path, tmp_inventory):
+        """Runner принимает и хранит become_pass."""
+        runner = Runner(
+            playbook_path=tmp_path / "test.yml",
+            become_pass="secret123",
+        )
+        assert runner._become_pass == "secret123"

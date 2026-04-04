@@ -118,6 +118,7 @@ flowtask run <плейбук> [опции]
   --tags ТЕГ [ТЕГ ...]   Выполнить только задачи с указанными тегами
   --skip-tags ТЕГ [ТЕГ]  Пропустить задачи с указанными тегами
   --continue-on-error     Продолжать выполнение после ошибок задач
+  -K, --ask-become-pass   Запросить пароль sudo для become-задач
 
 flowtask validate <плейбук> [-i DIR]     Проверить плейбук
 flowtask list-modules [-v]               Список доступных модулей
@@ -143,6 +144,14 @@ inventory: inventory/        # путь к каталогу inventory
 vars:                        # переменные уровня плейбука (перекрывают inventory)
   env: "production"
 
+pre_tasks:                   # задачи ДО основных (например, монтирование)
+  - name: "Mount SMB"
+    module: smb_mount
+    become: true             # выполнить через sudo
+    params:
+      server: "192.168.0.8"
+      share: "data"
+
 tasks:
   - name: "Описание задачи"
     module: copy             # имя модуля
@@ -153,6 +162,12 @@ tasks:
     register: result_var     # сохранить результат в контекст
     ignore_errors: false     # продолжить при ошибке
     tags: [files, sync]      # для фильтрации --tags / --skip-tags
+
+post_tasks:                  # задачи ПОСЛЕ основных (например, размонтирование)
+  - name: "Unmount SMB"
+    module: smb_umount
+    become: true
+    when: always             # всегда выполнять, даже при ошибках
 ```
 
 ### Параметры задачи
@@ -166,6 +181,19 @@ tasks:
 | `register` | строка | `None` | Сохранить результат в контекст под этим ключом |
 | `ignore_errors` | bool | `false` | Продолжать выполнение плейбука при ошибке задачи |
 | `tags` | список | `[]` | Теги для фильтрации `--tags` / `--skip-tags` |
+| `become` | bool | `false` | Выполнить через sudo (только для Bash-модулей) |
+
+### Секции задач
+
+| Секция | Когда выполняется | Описание |
+|--------|------------------|----------|
+| `pre_tasks` | До `tasks` | Подготовка: монтирование, проверка зависимостей |
+| `tasks` | Основная часть | Основные операции |
+| `post_tasks` | После `tasks` | Очистка: размонтирование, архивация логов |
+
+Порядок выполнения: `pre_tasks` → `tasks` → `post_tasks`
+
+Если `pre_tasks` завершились с ошибкой, `tasks` пропускаются, но `post_tasks` выполняются.
 
 ### Условия выполнения (when)
 
@@ -390,42 +418,32 @@ echo '{"status":"ok","message":"Обработано успешно","changed":t
 
 ---
 
-## Пример: полный плейбук выгрузки ПО
-
-В комплекте идёт `playbooks/deploy.yml` — реальный плейбук для выгрузки дистрибутивов с SMB-сервера:
+## Пример: полный плейбук с pre_tasks / post_tasks
 
 ```yaml
-name: "Deploy — выгрузка ПО с SMB"
+name: "Deploy — выгрузка с SMB"
 inventory: inventory/
 
 vars:
   out_dir: "{{ vars.out_base }}/{{ today }}"
 
-tasks:
-  # 1. Монтирование SMB
+pre_tasks:
+  # 1. Монтирование SMB (требует sudo)
   - name: "Mount SMB share"
-    module: mount_smb
+    module: smb_mount
+    become: true
     params:
       server: "{{ vars.smb_server }}"
       share: "{{ vars.smb_share }}"
-      mount_point: "{{ vars.smb_mount_point }}"
-      username: "{{ secrets.smb_user }}"
-      password: "{{ secrets.smb_pass }}"
-    tags: [smb, mount]
 
+tasks:
   # 2. Синхронизация папок
   - name: "Sync folders from SMB"
-    module: smb_mount
+    module: rsync
     params:
-      server: "{{ vars.smb_server }}"
-      share: "{{ vars.smb_share }}"
-      path: "{{ vars.smb_path }}"
-      mount_point: "{{ vars.smb_mount_point }}"
+      src: "/mnt/smb/data"
       dest: "{{ vars.out_dir }}"
-      folders:
-        {% for folder in vars.download_folders %}
-        - "{{ folder }}"
-        {% endfor %}
+      folders: "{{ vars.download_folders }}"
     tags: [sync, download]
     register: sync_result
 
@@ -434,18 +452,39 @@ tasks:
     module: archive
     params:
       src: "{{ vars.out_dir }}"
-      dest: "{{ vars.out_base }}/deploy_{{ today }}.tar.gz"
       format: "tar.gz"
     tags: [archive]
     when: success
 
+post_tasks:
   # 4. Размонтирование (всегда, даже при ошибках)
   - name: "Unmount SMB share"
-    module: umount_smb
-    params:
-      mount_point: "{{ vars.smb_mount_point }}"
-    tags: [smb, umount]
+    module: smb_umount
+    become: true
     when: always
+```
+
+### Privilege Escalation (become)
+
+Для задач, требующих прав root (монтирование, системные операции), используйте `become: true`. Работает только с Bash-модулями.
+
+```bash
+# С запросом пароля
+flowtask run playbook.yml --ask-become-pass
+
+# Без запроса (если настроен NOPASSWD в sudoers)
+flowtask run playbook.yml
+```
+
+**Безопасность пароля:**
+- Пароль передаётся через pipe (`sudo -S`), не виден в `ps`
+- Пароль НИКОГДА не логируется
+- Пароль не сохраняется в контексте или переменных окружения
+- Очищается сразу после выполнения задачи
+
+**Настройка sudoers (опционально, для работы без пароля):**
+```
+username ALL=(ALL) NOPASSWD: /bin/bash /path/to/flowtask/modules/bash/*.sh
 ```
 
 ---

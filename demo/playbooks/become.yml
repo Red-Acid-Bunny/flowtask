@@ -1,0 +1,42 @@
+# FlowTask — пример использования become (sudo)
+#
+# Этот плейбук демонстрирует использование privilege escalation
+# для выполнения задач от имени root.
+#
+# Использование:
+#   flowtask run demo/playbooks/become.yml --ask-become-pass
+#   flowtask run demo/playbooks/become.yml --ask-become-pass --verbose
+#
+# Предварительно:
+#   1. Убедитесь что sudo настроен (или используйте NOPASSWD)
+
+name: "Become — пример с sudo"
+inventory: example/inventory_rsync/
+
+pre_tasks:
+  # Эта задача требует sudo для доступа к /root
+  - name: "List /root directory"
+    module: list_dir
+    become: true
+    params:
+      path: "/root"
+    tags: [sudo, list]
+    register: root_listing
+
+tasks:
+  # Эта задача НЕ требует sudo — обычная директория
+  - name: "List current directory"
+    module: list_dir
+    params:
+      path: "."
+    tags: [list]
+    register: current_listing
+
+post_tasks:
+  # Всегда выполняется — выводим резюме
+  - name: "Print summary"
+    module: list_dir
+    params:
+      path: "/tmp"
+    when: always
+    tags: [list]

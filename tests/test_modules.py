@@ -4,8 +4,10 @@
 
 import json
 import pytest
+import subprocess
 from pathlib import Path
 from textwrap import dedent
+from unittest.mock import patch
 
 from flowtask.modules.base import BaseModule, param, ParamDescriptor
 from flowtask.engine.module_loader import ModuleLoader, ModuleNotFoundError
@@ -377,3 +379,75 @@ print(json.dumps({'status': 'ok', 'message': server, 'data': {'server': server}}
         script.write_text('echo ok')
         adapter = BashModuleAdapter(script)
         assert "test" in repr(adapter)
+
+    def test_become_uses_sudo(self, tmp_path):
+        """become=True добавляет sudo к команде."""
+        import subprocess
+        script = tmp_path / "whoami.sh"
+        script.write_text(dedent('''
+            input=$(cat)
+            whoami
+            echo '{"status":"ok","message":"done","changed":true}'
+        '''))
+
+        adapter = BashModuleAdapter(script)
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["sudo", "-S", "bash", str(script)],
+                returncode=0,
+                stdout='{"status":"ok","message":"done","changed":true}',
+                stderr="",
+            )
+            result = adapter.execute(become=True, become_pass="testpass")
+
+            call_args = mock_run.call_args
+            assert call_args[0][0][0] == "sudo"
+            assert call_args[0][0][1] == "-S"
+
+    def test_become_password_passed_via_pipe(self, tmp_path):
+        """become_pass передаётся через stdin."""
+        import subprocess
+        script = tmp_path / "read_stdin.sh"
+        script.write_text(dedent('''
+            read -r first_line
+            echo '{"status":"ok","message":"got_password","changed":true}'
+        '''))
+
+        adapter = BashModuleAdapter(script)
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["sudo", "-S", "bash", str(script)],
+                returncode=0,
+                stdout='{"status":"ok","message":"got_password","changed":true}',
+                stderr="",
+            )
+            result = adapter.execute(become=True, become_pass="testpass123")
+
+            call_kwargs = mock_run.call_args[1]
+            assert "testpass123" in call_kwargs["input"]
+            assert result.is_ok
+            assert result.message == "got_password"
+
+    def test_password_not_logged(self, tmp_path, caplog):
+        """Пароль sudo НИКОГДА не попадает в логи."""
+        import logging
+        import subprocess
+        script = tmp_path / "safe.sh"
+        script.write_text(dedent('''
+            input=$(cat)
+            echo '{"status":"ok","message":"done","changed":true}'
+        '''))
+
+        adapter = BashModuleAdapter(script)
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["sudo", "-S", "bash", str(script)],
+                returncode=0,
+                stdout='{"status":"ok","message":"done","changed":true}',
+                stderr="",
+            )
+            with caplog.at_level(logging.DEBUG, logger="flowtask.bash_adapter"):
+                adapter.execute(become=True, become_pass="super_secret_password_123")
+
+        assert "super_secret_password_123" not in caplog.text
+        assert "become" in caplog.text.lower()

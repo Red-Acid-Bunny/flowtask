@@ -1,0 +1,45 @@
+# FlowTask — пример монтирования SMB-шары
+#
+# Использование:
+#   flowtask run demo/playbooks/smb.yml --ask-become-pass
+#   flowtask run demo/playbooks/smb.yml --ask-become-pass --verbose
+#   flowtask run demo/playbooks/smb.yml --ask-become-pass --dry-run
+#
+# Предварительно:
+#   1. Убедитесь что cifs-utils установлен: sudo apt install cifs-utils
+#   2. Скопируйте demo/inventory_smb/secrets.yml.example → secrets.yml
+#      и заполните реальные учётные данные
+
+name: "SMB mount/umount example"
+inventory: demo/inventory_smb/
+
+pre_tasks:
+  # Монтирование SMB-шары (требует sudo)
+  - name: "Mount SMB share"
+    module: smb_mount
+    become: true
+    params:
+      server: "{{ vars.smb_server }}"
+      share: "{{ vars.smb_share }}"
+      mount_point: "{{ vars.smb_mount_point }}"
+      user: "{{ secrets.smb_user }}"
+      password: "{{ secrets.smb_pass }}"
+    tags: [smb, mount]
+
+tasks:
+  # Листинг смонтированной шары
+  - name: "List mounted directory"
+    module: list_dir
+    params:
+      path: "{{ vars.smb_mount_point }}"
+    tags: [list]
+
+post_tasks:
+  # Размонтирование — всегда, даже при ошибках
+  - name: "Unmount SMB share"
+    module: smb_umount
+    become: true
+    when: always
+    params:
+      mount_point: "{{ vars.smb_mount_point }}"
+    tags: [smb, umount]

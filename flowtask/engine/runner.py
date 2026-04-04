@@ -8,15 +8,23 @@ Playbook format:
   inventory: inventory/
   vars:
     key: value
-  tasks:
+  pre_tasks:
     - name: "Mount SMB"
-      module: mount_smb
+      module: smb_mount
+      become: true
       params:
         server: "{{ vars.smb_server }}"
-        password: "{{ secrets.smb_pass }}"
-      when: success          # success | failure | always | changed | <bool>
-      register: mount_result
-      ignore_errors: false
+  tasks:
+    - name: "Sync files"
+      module: rsync
+      params:
+        src: "/mnt/smb/data"
+        dest: "/backup/"
+  post_tasks:
+    - name: "Unmount SMB"
+      module: smb_umount
+      become: true
+      when: always
 
 Features:
   - Шаблонизация параметров через Template engine
@@ -27,6 +35,8 @@ Features:
   - Детальный отчёт выполнения
   - Ограничение задач: limit (по имени или индексу)
   - Tag-фильтрация: tags / skip_tags
+  - Privilege escalation: become (только для Bash-модулей)
+  - Секции задач: pre_tasks → tasks → post_tasks
 """
 
 from __future__ import annotations
@@ -57,11 +67,12 @@ class TaskDef:
     name: str
     module: str
     params: dict[str, Any] = field(default_factory=dict)
-    when: str | bool | None = None      # success | failure | always | changed | bool
-    register: str | None = None          # сохранить результат в context
+    when: str | bool | None = None
+    register: str | None = None
     ignore_errors: bool = False
     tags: list[str] = field(default_factory=list)
-    loop: list[Any] | None = None        # итерация по списку (stretch)
+    loop: list[Any] | None = None
+    become: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> TaskDef:
@@ -75,6 +86,7 @@ class TaskDef:
             ignore_errors=data.get("ignore_errors", False),
             tags=data.get("tags", []),
             loop=data.get("loop"),
+            become=data.get("become", False),
         )
 
 
@@ -84,17 +96,20 @@ class Playbook:
     name: str
     inventory: str = "inventory/"
     vars: dict[str, Any] = field(default_factory=dict)
+    pre_tasks: list[TaskDef] = field(default_factory=list)
     tasks: list[TaskDef] = field(default_factory=list)
+    post_tasks: list[TaskDef] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict) -> Playbook:
         """Создать Playbook из словаря."""
-        tasks = [TaskDef.from_dict(t) for t in data.get("tasks", [])]
         return cls(
             name=data.get("name", "Unnamed playbook"),
             inventory=data.get("inventory", "inventory/"),
             vars=data.get("vars", {}),
-            tasks=tasks,
+            pre_tasks=[TaskDef.from_dict(t) for t in data.get("pre_tasks", [])],
+            tasks=[TaskDef.from_dict(t) for t in data.get("tasks", [])],
+            post_tasks=[TaskDef.from_dict(t) for t in data.get("post_tasks", [])],
         )
 
     @classmethod
@@ -125,13 +140,14 @@ class TaskRecord:
     index: int
     name: str
     module: str
-    status: str = "pending"    # pending | running | ok | changed | skipped | error
+    status: str = "pending"
     changed: bool = False
     message: str = ""
     duration: float = 0.0
     error: str | None = None
     data: dict[str, Any] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
+    section: str = "tasks"  # pre_tasks | tasks | post_tasks
 
     @property
     def is_success(self) -> bool:
@@ -154,7 +170,7 @@ class TaskRecord:
 class PlaybookResult:
     """Итоговый результат выполнения playbook."""
     name: str
-    status: str = "ok"           # ok | error | partial
+    status: str = "ok"
     total: int = 0
     ok: int = 0
     changed: int = 0
@@ -182,8 +198,9 @@ class PlaybookResult:
                 "error": "FAILED",
             }.get(rec.status, "???")
             dur = f"{rec.duration:.2f}s"
+            section_tag = f"[{rec.section}]" if rec.section != "tasks" else "       "
             lines.append(
-                f"  [{icon:>8}] {rec.index+1}. {rec.name} ({dur})"
+                f"  [{icon:>8}] {section_tag} {rec.index+1}. {rec.name} ({dur})"
             )
             if rec.is_error and rec.error:
                 lines.append(f"             └─ {rec.error}")
@@ -226,6 +243,8 @@ class Runner:
         - Регистрация результатов (register)
         - Фильтрация задач по имени (limit), тегам (tags, skip_tags)
         - Глобальный stop_on_error
+        - Privilege escalation: become (только Bash-модули)
+        - Секции: pre_tasks → tasks → post_tasks
     """
 
     def __init__(
@@ -239,6 +258,7 @@ class Runner:
         tags: list[str] | None = None,
         skip_tags: list[str] | None = None,
         extra_modules_dirs: list[str | Path] | None = None,
+        become_pass: str | None = None,
     ):
         """
         Args:
@@ -251,6 +271,7 @@ class Runner:
             tags: Выполнить только задачи с указанными тегами
             skip_tags: Пропустить задачи с указанными тегами
             extra_modules_dirs: Дополнительные директории с модулями
+            become_pass: Пароль sudo для become (передаётся через pipe)
         """
         self._playbook_path = Path(playbook_path)
         self._inventory_dir = inventory_dir
@@ -261,8 +282,8 @@ class Runner:
         self._tags = set(tags) if tags else None
         self._skip_tags = set(skip_tags) if skip_tags else None
         self._extra_modules_dirs = extra_modules_dirs
+        self._become_pass = become_pass
 
-        # Внутреннее состояние
         self._playbook: Playbook | None = None
         self._context: Context | None = None
         self._template: Template | None = None
@@ -274,25 +295,27 @@ class Runner:
     def run(self) -> PlaybookResult:
         """Выполнить playbook и вернуть результат.
 
-        Returns:
-            PlaybookResult с детальными записями по каждой задаче
+        Порядок выполнения: pre_tasks → tasks → post_tasks
         """
         start_time = time.monotonic()
 
         # 1. Загрузка playbook
         self._playbook = Playbook.from_file(self._playbook_path)
-        logger.info("Loaded playbook: %s (%d tasks)", self._playbook.name, len(self._playbook.tasks))
+        total_tasks = (
+            len(self._playbook.pre_tasks)
+            + len(self._playbook.tasks)
+            + len(self._playbook.post_tasks)
+        )
+        logger.info("Loaded playbook: %s (%d tasks)", self._playbook.name, total_tasks)
 
         # 2. Загрузка контекста
         inv_dir = self._inventory_dir or self._playbook.inventory
         self._context = Context.from_inventory(inv_dir)
 
-        # 3. Template engine (создаём ДО применения playbook vars,
-        #    чтобы можно было развернуть шаблоны внутри них)
+        # 3. Template engine
         self._template = Template(self._context)
 
-        # Применяем playbook-level vars (перекрывают inventory)
-        # Шаблоны внутри vars разворачиваются через Template engine
+        # Применяем playbook-level vars
         if self._playbook.vars:
             for key, value in self._playbook.vars.items():
                 rendered = self._template.render_any(value)
@@ -304,33 +327,57 @@ class Runner:
         discovered = self._loader.discover()
         logger.info("Modules discovered: %s", discovered)
 
-        # 5. Фильтрация задач
-        tasks = self._filter_tasks(self._playbook.tasks)
-        logger.info("Tasks to execute: %d/%d", len(tasks), len(self._playbook.tasks))
-
-        # 6. Выполнение
+        # 5. Выполнение секций: pre_tasks → tasks → post_tasks
         records: list[TaskRecord] = []
-        playbook_failed = False
+        pre_tasks_failed = False
+        tasks_failed = False
 
-        for i, task_def in enumerate(tasks):
-            record = self._execute_task(i, task_def)
-            records.append(record)
+        sections = [
+            ("pre_tasks", self._playbook.pre_tasks),
+            ("tasks", self._playbook.tasks),
+            ("post_tasks", self._playbook.post_tasks),
+        ]
 
-            # Обновляем предыдущий результат (для when-условий)
-            self._prev_result = ModuleResult(
-                status=record.status,
-                changed=record.changed,
-                message=record.message,
-                data=record.data,
-            )
+        task_index = 0
+        for section_name, section_tasks in sections:
+            if not section_tasks:
+                continue
 
-            if record.is_error:
-                playbook_failed = True
-                if self._stop_on_error and not task_def.ignore_errors:
-                    logger.error("Stopping on error in task: %s", task_def.name)
-                    break
+            # Если pre_tasks провалились → пропускаем tasks (но выполняем post_tasks)
+            if section_name == "tasks" and pre_tasks_failed:
+                logger.info("Skipping tasks due to pre_tasks failure")
+                continue
 
-        # 7. Подсчёт результатов
+            filtered = self._filter_tasks(section_tasks)
+            logger.info("Executing %s: %d/%d tasks", section_name, len(filtered), len(section_tasks))
+
+            section_failed = False
+            for task_def in filtered:
+                record = self._execute_task(task_index, task_def, section=section_name)
+                records.append(record)
+                task_index += 1
+
+                self._prev_result = ModuleResult(
+                    status=record.status,
+                    changed=record.changed,
+                    message=record.message,
+                    data=record.data,
+                )
+
+                if record.is_error:
+                    section_failed = True
+                    if self._stop_on_error and not task_def.ignore_errors:
+                        logger.error("Stopping on error in task: %s", task_def.name)
+                        break
+
+            if section_name == "pre_tasks" and section_failed:
+                pre_tasks_failed = True
+            if section_name == "tasks" and section_failed:
+                tasks_failed = True
+
+        playbook_failed = pre_tasks_failed or tasks_failed
+
+        # 6. Подсчёт результатов
         duration = time.monotonic() - start_time
         result = PlaybookResult(
             name=self._playbook.name,
@@ -352,42 +399,32 @@ class Runner:
         """Фильтрация задач по limit, tags, skip_tags."""
         filtered = tasks
 
-        # Limit по имени (подстрока)
         if self._limit:
             limit_lower = self._limit.lower()
             filtered = [t for t in filtered if limit_lower in t.name.lower()]
             if not filtered:
                 logger.warning("Limit '%s' matched no tasks", self._limit)
 
-        # Фильтр по tags (если указаны — только задачи с тегами)
         if self._tags is not None:
             filtered = [t for t in filtered if self._tags & set(t.tags)]
             if not filtered:
                 logger.warning("Tags %s matched no tasks", self._tags)
 
-        # skip_tags
         if self._skip_tags is not None:
             filtered = [t for t in filtered if not (self._skip_tags & set(t.tags))]
 
         return filtered
 
     def _should_run(self, task_def: TaskDef) -> tuple[bool, str]:
-        """Определить, должна ли задача выполниться.
-
-        Returns:
-            (should_run, reason) — флаг и причина пропуска
-        """
+        """Определить, должна ли задача выполниться."""
         when = task_def.when
 
-        # None / True → всегда выполнять
         if when is None or when is True:
             return True, ""
 
-        # False → пропустить
         if when is False:
             return False, "when=false"
 
-        # Строковые условия
         if isinstance(when, str):
             when_lower = when.strip().lower()
 
@@ -396,8 +433,7 @@ class Runner:
 
             if when_lower == "success":
                 if self._prev_result is None:
-                    return True, ""  # первая задача → success
-                # success = не error и не skipped (changed тоже успех)
+                    return True, ""
                 if not self._prev_result.is_error and not self._prev_result.is_skipped:
                     return True, ""
                 return False, f"when=success (prev status: {self._prev_result.status})"
@@ -416,11 +452,9 @@ class Runner:
                     return True, ""
                 return False, "when=changed (prev not changed)"
 
-            # Попытка шаблонизации (например "vars.some_flag")
             if self._template:
                 rendered = self._template.render(when)
                 if rendered == when:
-                    # Шаблон не заменился — может быть литерал
                     pass
                 try:
                     val = yaml.safe_load(rendered)
@@ -431,24 +465,22 @@ class Runner:
                 except (yaml.YAMLError, ValueError):
                     pass
 
-        # По умолчанию — выполнять
         return True, ""
 
-    def _execute_task(self, index: int, task_def: TaskDef) -> TaskRecord:
-        """Выполнить одну задачу.
-
-        Returns:
-            TaskRecord с результатом выполнения
-        """
+    def _execute_task(
+        self, index: int, task_def: TaskDef, section: str = "tasks"
+    ) -> TaskRecord:
+        """Выполнить одну задачу."""
         record = TaskRecord(
             index=index,
             name=task_def.name,
             module=task_def.module,
+            section=section,
         )
 
-        logger.info("─── Task %d: %s (module: %s) ───", index + 1, task_def.name, task_def.module)
+        become_tag = " [become]" if task_def.become else ""
+        logger.info("─── Task %d: %s (module: %s)%s ───", index + 1, task_def.name, task_def.module, become_tag)
 
-        # Проверка when-условия
         should_run, skip_reason = self._should_run(task_def)
         if not should_run:
             record.status = "skipped"
@@ -460,27 +492,26 @@ class Runner:
         start_time = time.monotonic()
 
         try:
-            # 1. Получить модуль
             module_ref = self._loader.get(task_def.module)
-
-            # 2. Рендеринг параметров
             rendered_params = self._template.render_any(task_def.params) if self._template else task_def.params
             record.params = rendered_params
 
-            # 3. Выполнение
             if isinstance(module_ref, type) and hasattr(module_ref, '__bases__'):
-                # Python-модуль (BaseModule subclass)
+                # Python-модуль (become не поддерживается)
+                if task_def.become:
+                    logger.warning("become is not supported for Python modules, ignoring for task: %s", task_def.name)
                 instance = module_ref(**rendered_params)
                 result = instance.execute(dry_run=self._dry_run, verbose=self._verbose)
             else:
-                # Bash-модуль (BashModuleAdapter)
+                # Bash-модуль
                 result = module_ref.execute(
                     params=rendered_params,
                     dry_run=self._dry_run,
                     verbose=self._verbose,
+                    become=task_def.become,
+                    become_pass=self._become_pass if task_def.become else None,
                 )
 
-            # 4. Обновить запись
             record.status = "changed" if result.changed else ("ok" if result.is_ok else result.status)
             record.changed = result.changed
             record.message = result.message
@@ -489,7 +520,6 @@ class Runner:
             if self._verbose:
                 logger.info("Result: %s", result)
 
-            # 5. Регистрация результата
             if task_def.register and self._context:
                 self._context.set(task_def.register, {
                     "status": result.status,
@@ -526,34 +556,34 @@ class Runner:
 
     @property
     def playbook(self) -> Playbook | None:
-        """Текущий playbook (после run())."""
         return self._playbook
 
     @property
     def context(self) -> Context | None:
-        """Текущий контекст (после run())."""
         return self._context
 
     def validate(self) -> list[str]:
-        """Валидация playbook без выполнения.
-
-        Returns:
-            Список ошибок/предупреждений (пустой = всё ОК)
-        """
+        """Валидация playbook без выполнения."""
         errors = []
 
-        # Загрузка playbook
         try:
             self._playbook = Playbook.from_file(self._playbook_path)
         except (FileNotFoundError, ValueError) as e:
             return [f"Playbook load error: {e}"]
 
-        # Проверка задач
-        for i, task in enumerate(self._playbook.tasks):
-            if not task.name:
-                errors.append(f"Task {i}: missing name")
-            if not task.module:
-                errors.append(f"Task {i}: missing module")
+        # Проверка всех секций
+        sections = {
+            "pre_tasks": self._playbook.pre_tasks,
+            "tasks": self._playbook.tasks,
+            "post_tasks": self._playbook.post_tasks,
+        }
+
+        for section_name, section_tasks in sections.items():
+            for i, task in enumerate(section_tasks):
+                if not task.name:
+                    errors.append(f"{section_name}[{i}]: missing name")
+                if not task.module:
+                    errors.append(f"{section_name}[{i}]: missing module")
 
         # Проверка inventory
         inv_dir = self._inventory_dir or self._playbook.inventory
@@ -564,9 +594,10 @@ class Runner:
         # Проверка модулей
         self._loader = ModuleLoader(extra_modules_dirs=self._extra_modules_dirs)
         self._loader.discover()
-        for i, task in enumerate(self._playbook.tasks):
-            if not self._loader.has(task.module):
-                errors.append(f"Task {i} ({task.name}): module '{task.module}' not found")
+        for section_name, section_tasks in sections.items():
+            for i, task in enumerate(section_tasks):
+                if not self._loader.has(task.module):
+                    errors.append(f"{section_name}[{i}] ({task.name}): module '{task.module}' not found")
 
         return errors
 

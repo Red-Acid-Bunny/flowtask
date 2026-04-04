@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import getpass
 import logging
 import sys
 from pathlib import Path
@@ -60,6 +61,14 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     _setup_logging(verbose=args.verbose)
 
+    become_pass = None
+    if args.ask_become_pass:
+        try:
+            become_pass = getpass.getpass("[sudo] password: ")
+        except (EOFError, KeyboardInterrupt):
+            print("\nAborted", file=sys.stderr)
+            return 130
+
     runner = Runner(
         playbook_path=args.playbook,
         inventory_dir=args.inventory,
@@ -69,6 +78,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         limit=args.limit,
         tags=args.tags,
         skip_tags=args.skip_tags,
+        become_pass=become_pass,
     )
 
     result = runner.run()
@@ -225,6 +235,12 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="*",
         default=None,
         help="Skip tasks with these tags",
+    )
+    run_parser.add_argument(
+        "--ask-become-pass", "-K",
+        action="store_true",
+        default=False,
+        help="Ask for sudo password for become tasks",
     )
     run_parser.set_defaults(func=cmd_run)
 

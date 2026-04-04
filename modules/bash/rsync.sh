@@ -14,9 +14,13 @@
 set -eo pipefail
 
 # =============================================
-# Чтение параметров из JSON (stdin)
+# Чтение параметров из JSON (stdin или base64 аргумент при become)
 # =============================================
-input=$(cat)
+if [ -n "${1:-}" ]; then
+  input=$(echo "$1" | base64 -d)
+else
+  input=$(cat)
+fi
 
 read_param() {
   echo "$input" | python3 -c "import sys,json; print(json.load(sys.stdin)['params'].get('$1','$2'))"

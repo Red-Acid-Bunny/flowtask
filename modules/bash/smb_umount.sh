@@ -1,45 +1,82 @@
 #!/bin/bash
-# flowtask bash module: umount_smb
-# Unmount SMB/CIFS share
+# flowtask bash module: smb_umount
+# Размонтирует SMB/CIFS шару
 #
-# Input (stdin): {"params": {"mount_point": "..."}, "dry_run": bool}
-# Output (stdout): {"status": "ok|error", "message": "...", "changed": bool}
+# Input:
+#   $1 (optional) — base64-encoded JSON (при become)
+#   stdin — JSON payload (без become)
+#
+# Параметры:
+#   mount_point — локальная точка монтирования (по умолчанию /mnt/smb)
+#
+# Output (stdout): {"status": "ok|error|skipped", "message": "...", "changed": bool, "data": {...}}
+# Logs: stderr → перехватываются логгером FlowTask
 
-set -euo pipefail
+set -eo pipefail
 
-input=$(cat)
-
-mount_point=$(echo "$input" | python3 -c "import sys,json; print(json.load(sys.stdin)['params'].get('mount_point',''))")
-lazy=$(echo "$input" | python3 -c "import sys,json; print(json.load(sys.stdin)['params'].get('lazy',False))")
-dry_run=$(echo "$input" | python3 -c "import sys,json; print(json.load(sys.stdin).get('dry_run',False))")
-
-if [ -z "$mount_point" ]; then
-    echo '{"status":"error","message":"mount_point is required"}'
-    exit 1
-fi
-
->&2 echo "[INFO] Unmounting $mount_point"
-
-if [ "$dry_run" = "True" ]; then
-    echo "{\"status\":\"ok\",\"message\":\"[DRY-RUN] Would unmount $mount_point\",\"changed\":false}"
-    exit 0
-fi
-
-if ! mountpoint -q "$mount_point" 2>/dev/null; then
-    echo "{\"status\":\"ok\",\"message\":\"Not mounted: $mount_point\",\"changed\":false}"
-    exit 0
-fi
-
-flag=""
-if [ "$lazy" = "True" ]; then
-    flag="-l"
-    >&2 echo "[INFO] Using lazy unmount"
-fi
-
-if sudo umount $flag "$mount_point" 2>/tmp/flowtask_umnt_err; then
-    echo "{\"status\":\"ok\",\"message\":\"Unmounted: $mount_point\",\"changed\":true,\"data\":{\"mount_point\":\"$mount_point\"}}"
+# =============================================
+# Чтение параметров из JSON
+# =============================================
+if [ -n "${1:-}" ]; then
+  input=$(echo "$1" | base64 -d)
 else
-    err=$(cat /tmp/flowtask_umnt_err 2>/dev/null | tr '"' "'" | head -1)
-    echo "{\"status\":\"error\",\"message\":\"Unmount failed: ${err:-unknown error}\"}"
-    exit 1
+  input=$(cat)
 fi
+
+read_param() {
+  echo "$input" | python3 -c "import sys,json; print(json.load(sys.stdin)['params'].get('$1','$2'))"
+}
+
+read_flag() {
+  echo "$input" | python3 -c "import sys,json; d=json.load(sys.stdin); print(str(d.get('$1','$2')).lower())"
+}
+
+mount_point=$(read_param "mount_point" "/mnt/smb")
+dry_run=$(read_flag "dry_run" "false")
+
+# =============================================
+# Подготовка пути
+# =============================================
+mount_point=$(realpath -m "$mount_point" 2>/dev/null || echo "$mount_point")
+
+# =============================================
+# Проверка — смонтирована ли?
+# Ищем точное совпадение mount_point в /proc/mounts
+# =============================================
+mount_info=$(grep " ${mount_point} " /proc/mounts 2>/dev/null || true)
+
+if [ -z "$mount_info" ]; then
+  echo "{\"status\":\"ok\",\"message\":\"Not mounted: ${mount_point}\",\"changed\":false,\"data\":{\"mount_point\":\"${mount_point}\"}}"
+  exit 0
+fi
+
+# Извлекаем источник монтирования
+mount_source=$(echo "$mount_info" | awk '{print $1}')
+
+# =============================================
+# Dry run
+# =============================================
+if [ "$dry_run" = "true" ]; then
+  echo "{\"status\":\"ok\",\"message\":\"[DRY-RUN] Would unmount ${mount_point} (${mount_source})\",\"changed\":false,\"data\":{\"mount_point\":\"${mount_point}\",\"source\":\"${mount_source}\"}}"
+  exit 0
+fi
+
+# =============================================
+# Размонтирование
+# =============================================
+>&2 echo "[INFO] Unmounting ${mount_point} (${mount_source})"
+
+umount_exit=0
+sudo umount "$mount_point" >/dev/null 2>&1 || umount_exit=$?
+
+if [ "$umount_exit" -ne 0 ]; then
+  echo "{\"status\":\"error\",\"message\":\"Unmount failed (exit code: ${umount_exit}). Is the mount point busy?\"}"
+  exit 1
+fi
+
+# Удаляем точку монтирования если пустая
+rmdir "$mount_point" 2>/dev/null || true
+
+>&2 echo "[INFO] Unmounted successfully: ${mount_point}"
+
+echo "{\"status\":\"ok\",\"message\":\"Unmounted ${mount_point} (${mount_source})\",\"changed\":true,\"data\":{\"mount_point\":\"${mount_point}\",\"source\":\"${mount_source}\"}}"

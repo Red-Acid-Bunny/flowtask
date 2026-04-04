@@ -21,12 +21,19 @@ Protocol:
       "changed": true|false,
       "data": { ... }
     }
+
+Security:
+  - Пароль sudo передаётся ТОЛЬКО через pipe (stdin)
+  - Пароль НИКОГДА не логируется и не попадает в аргументы
+  - После выполнения пароль очищается (None)
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -51,7 +58,7 @@ class BashModuleAdapter:
             raise ValueError(f"Not a file: {script_path}")
 
         self.path = script_path
-        self.name = script_path.stem  # mount_smb.sh → "mount_smb"
+        self.name = script_path.stem
 
         logger.debug("Registered bash module: %s → %s", self.name, self.path)
 
@@ -61,6 +68,8 @@ class BashModuleAdapter:
         dry_run: bool = False,
         verbose: bool = False,
         timeout: int = 300,
+        become: bool = False,
+        become_pass: str | None = None,
     ) -> ModuleResult:
         """Выполнить bash-скрипт.
 
@@ -69,6 +78,8 @@ class BashModuleAdapter:
             dry_run: Предпросмотр без выполнения
             verbose: Подробный вывод
             timeout: Таймаут в секундах
+            become: Выполнить через sudo
+            become_pass: Пароль sudo (передаётся через pipe, НИКОГДА не логируется)
 
         Returns:
             ModuleResult
@@ -84,12 +95,24 @@ class BashModuleAdapter:
             "verbose": verbose,
         }
 
-        logger.info("Running bash module: %s (dry_run=%s)", self.name, dry_run)
+        become_tag = " [become]" if become else ""
+        logger.info("Running bash module: %s (dry_run=%s)%s", self.name, dry_run, become_tag)
+
+        if become:
+            # При become stdin занят паролем sudo (-S).
+            # JSON кодируем в base64 и передаём первым аргументом.
+            # Bash-модули читают: input=$(echo "${1:-}" | base64 -d) || input=$(cat)
+            json_b64 = base64.b64encode(json.dumps(payload).encode()).decode()
+            cmd = ["sudo", "-S", "bash", str(self.path), json_b64]
+            input_data = f"{become_pass}\n"
+        else:
+            cmd = ["bash", str(self.path)]
+            input_data = json.dumps(payload)
 
         try:
             proc = subprocess.run(
-                ["bash", str(self.path)],
-                input=json.dumps(payload),
+                cmd,
+                input=input_data,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -104,13 +127,14 @@ class BashModuleAdapter:
             logger.error(msg)
             return ModuleResult.error(msg)
 
-        # stderr → в логи
+        finally:
+            become_pass = None
+
         stderr = proc.stderr.strip()
         if stderr:
             for line in stderr.splitlines():
                 logger.debug("[%s] %s", self.name, line)
 
-        # stdout → JSON результат
         stdout = proc.stdout.strip()
         if not stdout:
             msg = f"Bash module {self.name} produced no output (exit code: {proc.returncode})"
@@ -119,7 +143,6 @@ class BashModuleAdapter:
                 msg += f" — stderr: {stderr}"
             return ModuleResult.error(msg)
 
-        # Парсинг JSON
         try:
             result = ModuleResult.from_json(stdout)
         except json.JSONDecodeError as e:
@@ -128,7 +151,6 @@ class BashModuleAdapter:
             return ModuleResult.error(msg)
 
         if proc.returncode != 0 and result.is_ok:
-            # Скрипт вернул exit code != 0, но JSON статус ok — всё равно считаем ошибкой
             logger.warning("Bash module %s: exit code %d but status=ok", self.name, proc.returncode)
 
         return result
