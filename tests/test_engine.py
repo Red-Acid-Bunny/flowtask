@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import date
 
 from flowtask.engine.context import Context, _deep_merge
-from flowtask.engine.template import Template
+from flowtask.engine.template import Template, TemplateError, _parse_expression
 from flowtask.engine.result import ModuleResult, ModuleError
 
 
@@ -99,6 +99,14 @@ class TestContext:
         ctx = Context.from_inventory("/nonexistent/path")
         assert ctx.get("anything") is None
 
+    def test_has(self, context):
+        assert context.has("smb_server") is True
+        assert context.has("nonexistent") is False
+
+    def test_has_secret(self, context):
+        assert context.has_secret("smb_pass") is True
+        assert context.has_secret("nonexistent") is False
+
     def test_setters(self):
         ctx = Context()
         ctx.set("key", "value")
@@ -156,11 +164,37 @@ class TestTemplate:
         result = tmpl.render("//{{ vars.smb_server }}/{{ vars.smb_share }}")
         assert result == "//192.168.0.8/box_delta_bin"
 
-    def test_render_unresolved(self, context):
-        """Неизвестные ключи остаются как есть"""
+    def test_render_unresolved_raises_error(self, context):
+        """Неопределённые переменные вызывают ошибку"""
         tmpl = Template(context)
-        result = tmpl.render("{{ unknown.key }}")
-        assert result == "{{ unknown.key }}"
+        with pytest.raises(TemplateError, match="Variable 'unknown.key' is not defined"):
+            tmpl.render("{{ unknown.key }}")
+
+    def test_undefined_vars_raises_error(self, context):
+        tmpl = Template(context)
+        with pytest.raises(TemplateError, match="Variable 'vars.missing' is not defined"):
+            tmpl.render("{{ vars.missing }}")
+
+    def test_undefined_secrets_raises_error(self, context):
+        tmpl = Template(context)
+        with pytest.raises(TemplateError, match="Variable 'secrets.missing' is not defined"):
+            tmpl.render("{{ secrets.missing }}")
+
+    def test_partial_render_raises_error(self, context):
+        tmpl = Template(context)
+        with pytest.raises(TemplateError, match="Variable 'vars.missing' is not defined"):
+            tmpl.render("prefix-{{ vars.missing }}-suffix")
+
+    def test_render_any_undefined_nested(self, context):
+        tmpl = Template(context)
+        with pytest.raises(TemplateError):
+            tmpl.render_any({"a": "{{ vars.missing}}"})
+
+    def test_filter_syntax_not_implemented(self, context):
+        """Фильтры пока не реализованы — ошибка"""
+        tmpl = Template(context)
+        with pytest.raises(TemplateError, match="filters not yet implemented"):
+            tmpl.render("{{ vars.smb_server | default('localhost') }}")
 
     def test_render_no_templates(self, context):
         tmpl = Template(context)
@@ -199,6 +233,30 @@ class TestTemplate:
     def test_safe_log_no_templates(self, context):
         tmpl = Template(context)
         assert tmpl.safe_log("plain text") == "plain text"
+
+
+# ============================================================
+# Parse expression (filter infrastructure)
+# ============================================================
+
+class TestParseExpression:
+
+    def test_simple_key(self):
+        key, filters = _parse_expression("vars.smb_server")
+        assert key == "vars.smb_server"
+        assert filters == []
+
+    def test_key_with_filter(self):
+        key, filters = _parse_expression("vars.x | default('val')")
+        assert key == "vars.x"
+        assert len(filters) == 1
+        assert filters[0][0] == "default('val')"
+
+    def test_key_with_multiple_filters(self):
+        key, filters = _parse_expression("vars.x | trim")
+        assert key == "vars.x"
+        assert len(filters) == 1
+        assert filters[0][0] == "trim"
 
 
 # ============================================================

@@ -68,9 +68,17 @@ class Context:
         """Получить переменную из vars."""
         return self._vars.get(key, default)
 
+    def has(self, key: str) -> bool:
+        """Проверить наличие переменной в vars."""
+        return key in self._vars
+
     def get_secret(self, key: str, default: Any = None) -> Any:
         """Получить секрет."""
         return self._secrets.get(key, default)
+
+    def has_secret(self, key: str) -> bool:
+        """Проверить наличие секрета."""
+        return key in self._secrets
 
     def get_builtin(self, key: str, default: Any = None) -> Any:
         """Получить встроенную переменную (today, timestamp и тд)."""

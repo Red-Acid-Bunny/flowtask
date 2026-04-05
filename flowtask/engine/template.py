@@ -1,5 +1,5 @@
 """
-Template — безопасная подстановка переменных.
+Template — строгая подстановка переменных.
 
 Поддерживает шаблоны:
   {{ vars.key }}          → из vars
@@ -8,9 +8,9 @@ Template — безопасная подстановка переменных.
   {{ key }}               → автопоиск (builtins → vars → secrets)
 
 Безопасность:
-  - Подставляются только известные ключи из контекста
-  - Неизвестные ключи НЕ подставляются (оставляются как есть, с warning)
+  - Неопределённые переменные вызывают ошибку (TemplateError)
   - Значения секретов маскируются в логах
+  - Подготовлена инфраструктура для фильтров ({{ x | default('val') }})
 """
 
 from __future__ import annotations
@@ -31,6 +31,24 @@ _SECRET_NAMESPACES = {"secrets"}
 class TemplateError(Exception):
     """Ошибка в шаблоне."""
     pass
+
+
+def _parse_expression(expr: str) -> tuple[str, list[tuple[str, list]]]:
+    """Разобрать выражение с возможными фильтрами.
+
+    Examples:
+        "vars.smb_server" → ("vars.smb_server", [])
+        "vars.x | default('val')" → ("vars.x", [("default('val')", [])])
+
+    TODO: Реализовать выполнение фильтров для Variant B.
+    """
+    parts = expr.split("|", 1)
+    key = parts[0].strip()
+    filters = []
+    if len(parts) > 1:
+        # Пока только запоминаем фильтр, но не выполняем
+        filters.append((parts[1].strip(), []))
+    return key, filters
 
 
 class Template:
@@ -56,6 +74,9 @@ class Template:
 
         Returns:
             Строка с подставленными значениями
+
+        Raises:
+            TemplateError: Если переменная не определена
         """
         if not text or "{{" not in text:
             return text
@@ -63,9 +84,6 @@ class Template:
         def _replace(match: re.Match) -> str:
             key = match.group(1).strip()
             value = self._resolve(key)
-            if value is None:
-                logger.warning("Template: unresolved key '%s'", key)
-                return match.group(0)  # Оставить как есть
             return str(value)
 
         return _TEMPLATE_PATTERN.sub(_replace, text)
@@ -115,25 +133,42 @@ class Template:
             key: Ключ из шаблона (например "vars.smb_server" или "today")
 
         Returns:
-            Значение или None если ключ не найден
+            Значение
+
+        Raises:
+            TemplateError: Если переменная не определена
         """
+        # Парсинг с поддержкой фильтров (для будущего Variant B)
+        base_key, filters = _parse_expression(key)
+
+        # TODO: применить фильтры когда Variant B будет реализован
+        if filters:
+            filter_names = [f[0] for f in filters]
+            raise TemplateError(
+                f"Variable '{key}' is not defined — filters not yet implemented: {', '.join(filter_names)}"
+            )
+
         # Точечный путь — явно указанный namespace
-        if "." in key:
-            namespace, rest = key.split(".", 1)
+        if "." in base_key:
+            namespace, rest = base_key.split(".", 1)
             if namespace == "vars":
+                if not self._context.has(rest):
+                    raise TemplateError(f"Variable '{base_key}' is not defined")
                 return self._context.get(rest)
             elif namespace == "secrets":
+                if not self._context.has_secret(rest):
+                    raise TemplateError(f"Variable '{base_key}' is not defined")
                 value = self._context.get_secret(rest)
-                logger.debug("Template: resolved secret '%s' → ***", key)
+                logger.debug("Template: resolved secret '%s' → ***", base_key)
                 return value
             else:
-                logger.warning(
-                    "Template: unknown namespace '%s' in '%s'", namespace, key
-                )
-                return None
+                raise TemplateError(f"Variable '{base_key}' is not defined")
 
         # Без namespace — автопоиск
-        return self._context.get_any(key)
+        value = self._context.get_any(base_key)
+        if value is None:
+            raise TemplateError(f"Variable '{base_key}' is not defined")
+        return value
 
     def safe_log(self, text: str) -> str:
         """Вернуть строку с замаскированными секретами для вывода в лог.

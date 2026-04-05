@@ -1089,3 +1089,29 @@ class TestBecome:
             become_pass="secret123",
         )
         assert runner._become_pass == "secret123"
+
+    def test_runner_fails_on_undefined_var(self, tmp_path, tmp_inventory):
+        """Плейбук с undefined var → ошибка в задаче."""
+        pb_data = {
+            "name": "Undefined Var Test",
+            "inventory": str(tmp_inventory),
+            "tasks": [
+                {
+                    "name": "Use missing var",
+                    "module": "copy",
+                    "params": {
+                        "src": "{{ vars.nonexistent_key }}",
+                        "dest": str(tmp_path / "y"),
+                    },
+                },
+            ],
+        }
+
+        pb = tmp_path / "test.yml"
+        pb.write_text(yaml.dump(pb_data))
+
+        runner = Runner(playbook_path=pb, stop_on_error=False)
+        result = runner.run()
+
+        assert result.failed > 0
+        assert "not defined" in result.records[0].error
