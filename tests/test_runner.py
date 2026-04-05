@@ -128,12 +128,6 @@ class TestTaskDef:
         assert td.ignore_errors is True
         assert td.tags == ["smb", "network"]
 
-    def test_from_dict_with_loop(self):
-        td = TaskDef.from_dict({
-            "module": "copy",
-            "loop": ["a", "b", "c"],
-        })
-        assert td.loop == ["a", "b", "c"]
 
 
 # ============================================================
@@ -378,6 +372,61 @@ class TestWhenConditions:
         task = TaskDef(name="after_changed", module="mock_module", when="success")
         should, _ = runner._should_run(task)
         assert should is True
+
+    def test_when_unknown_condition(self, context, mock_module_cls, caplog):
+        """Unknown when condition → task is skipped with warning."""
+        import logging
+        runner = self._make_runner(context, mock_module_cls)
+        task = TaskDef(name="test", module="mock_module", when="some_unknown_condition")
+        should, reason = runner._should_run(task)
+        assert should is False
+        assert "when=unknown" in reason
+        assert "some_unknown_condition" in caplog.text
+
+
+# ============================================================
+# Runner — ignore_errors preserves section flow
+# ============================================================
+
+class TestIgnoreErrorsSectionFlow:
+
+    def test_ignore_errors_in_pretasks_continues_to_tasks(self, tmp_path, tmp_inventory):
+        """pre_tasks с ignore_errors не блокируют tasks."""
+        valid_src = tmp_path / "valid_src"
+        valid_src.mkdir()
+        (valid_src / "file.txt").write_text("data")
+
+        pb_data = {
+            "name": "Ignore Errors Section Test",
+            "inventory": str(tmp_inventory),
+            "pre_tasks": [
+                {
+                    "name": "Failing pre-task",
+                    "module": "nonexistent_module",
+                    "ignore_errors": True,
+                },
+            ],
+            "tasks": [
+                {
+                    "name": "Task that should run",
+                    "module": "copy",
+                    "params": {
+                        "src": str(valid_src),
+                        "dest": str(tmp_path / "dest"),
+                    },
+                },
+            ],
+        }
+
+        pb = tmp_path / "section_flow.yml"
+        pb.write_text(yaml.dump(pb_data))
+
+        runner = Runner(playbook_path=pb, stop_on_error=True)
+        result = runner.run()
+
+        assert result.total == 2
+        assert result.records[0].status == "error"
+        assert result.records[1].status in ("ok", "changed")
 
 
 # ============================================================

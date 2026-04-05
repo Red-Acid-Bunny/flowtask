@@ -53,6 +53,8 @@ from .context import Context
 from .template import Template
 from .result import ModuleResult, ModuleError
 from .module_loader import ModuleLoader, ModuleNotFoundError
+from .bash_adapter import BashModuleAdapter
+from .python_adapter import PythonScriptAdapter
 
 logger = logging.getLogger("flowtask.runner")
 
@@ -71,7 +73,6 @@ class TaskDef:
     register: str | None = None
     ignore_errors: bool = False
     tags: list[str] = field(default_factory=list)
-    loop: list[Any] | None = None
     become: bool = False
 
     @classmethod
@@ -85,7 +86,6 @@ class TaskDef:
             register=data.get("register"),
             ignore_errors=data.get("ignore_errors", False),
             tags=data.get("tags", []),
-            loop=data.get("loop"),
             become=data.get("become", False),
         )
 
@@ -364,7 +364,7 @@ class Runner:
                     data=record.data,
                 )
 
-                if record.is_error:
+                if record.is_error and not task_def.ignore_errors:
                     section_failed = True
                     if self._stop_on_error and not task_def.ignore_errors:
                         logger.error("Stopping on error in task: %s", task_def.name)
@@ -465,7 +465,8 @@ class Runner:
                 except (yaml.YAMLError, ValueError):
                     pass
 
-        return True, ""
+            logger.warning("Unknown when condition '%s' for task '%s', skipping task", when, task_def.name)
+            return False, f"when=unknown ({when})"
 
     def _execute_task(
         self, index: int, task_def: TaskDef, section: str = "tasks"
@@ -497,11 +498,28 @@ class Runner:
             record.params = rendered_params
 
             if isinstance(module_ref, type) and hasattr(module_ref, '__bases__'):
-                # Python-модуль (become не поддерживается)
+                # Python-модуль (класс, наследующий BaseModule)
                 if task_def.become:
                     logger.warning("become is not supported for Python modules, ignoring for task: %s", task_def.name)
                 instance = module_ref(**rendered_params)
                 result = instance.execute(dry_run=self._dry_run, verbose=self._verbose)
+            elif isinstance(module_ref, PythonScriptAdapter):
+                # Python-скрипт (JSON stdin/stdout)
+                if task_def.become:
+                    logger.warning("become is not supported for Python scripts, ignoring for task: %s", task_def.name)
+                context_data = {}
+                if self._context:
+                    context_data = {
+                        "vars": self._context.vars,
+                        "secrets": self._context.secrets,
+                        "playbook_dir": str(self._playbook_path.parent) if self._playbook_path else "",
+                    }
+                result = module_ref.execute(
+                    params=rendered_params,
+                    context=context_data,
+                    dry_run=self._dry_run,
+                    verbose=self._verbose,
+                )
             else:
                 # Bash-модуль
                 result = module_ref.execute(
