@@ -106,6 +106,14 @@ if [ "$dry_run" = "true" ]; then
 fi
 
 # =============================================
+# Cleanup trap (устанавливаем ДО создания cred_file)
+# =============================================
+cleanup() {
+  [ -n "${cred_file:-}" ] && [ -f "${cred_file:-}" ] && rm -f "$cred_file"
+}
+trap cleanup EXIT
+
+# =============================================
 # Формирование опций монтирования
 # =============================================
 opts="vers=${version},iocharset=utf8"
@@ -130,20 +138,16 @@ else
 fi
 
 # =============================================
-# Cleanup trap
-# =============================================
-cleanup() {
-  [ -n "${cred_file:-}" ] && [ -f "${cred_file:-}" ] && rm -f "$cred_file"
-}
-trap cleanup EXIT
-
-# =============================================
 # Монтирование
 # =============================================
 >&2 echo "[INFO] Mounting //${server}/${share} → ${mount_point} (vers=${version})"
 
 mount_exit=0
-sudo mount -t cifs "//${server}/${share}" "$mount_point" -o "$opts" >/dev/null 2>&1 || mount_exit=$?
+if [ "$(id -u)" -eq 0 ]; then
+  mount -t cifs "//${server}/${share}" "$mount_point" -o "$opts" >/dev/null 2>&1 || mount_exit=$?
+else
+  sudo mount -t cifs "//${server}/${share}" "$mount_point" -o "$opts" >/dev/null 2>&1 || mount_exit=$?
+fi
 
 if [ "$mount_exit" -ne 0 ]; then
   echo "{\"status\":\"error\",\"message\":\"Mount failed (exit code: ${mount_exit}). Check server, share, and credentials.\"}"

@@ -67,7 +67,11 @@ fi
 >&2 echo "[INFO] Unmounting ${mount_point} (${mount_source})"
 
 umount_exit=0
-sudo umount "$mount_point" >/dev/null 2>&1 || umount_exit=$?
+if [ "$(id -u)" -eq 0 ]; then
+  umount "$mount_point" >/dev/null 2>&1 || umount_exit=$?
+else
+  sudo umount "$mount_point" >/dev/null 2>&1 || umount_exit=$?
+fi
 
 if [ "$umount_exit" -ne 0 ]; then
   echo "{\"status\":\"error\",\"message\":\"Unmount failed (exit code: ${umount_exit}). Is the mount point busy?\"}"
