@@ -99,6 +99,12 @@ class TestCopy:
         result = m.execute()
         assert result.is_error
 
+    def test_copy_error_status(self, tmp_path):
+        """Copy возвращает status='error' когда все файлы не найдены."""
+        m = Copy(src=str(tmp_path / "nonexistent1"), dest=str(tmp_path / "dest"))
+        result = m.execute()
+        assert result.status == "error"
+
     def test_dry_run(self, tmp_path):
         src = tmp_path / "src" / "file.txt"
         src.parent.mkdir()
@@ -333,6 +339,41 @@ class TestArchive:
         m = Archive(src=str(f), format="zip")
         result = m.execute(dry_run=True)
         assert "DRY-RUN" in result.message
+
+    def test_archive_overwrite(self, tmp_path):
+        """overwrite=True перезаписывает существующий архив."""
+        f = tmp_path / "f.txt"
+        f.write_text("original")
+
+        dest = tmp_path / "output"
+        m = Archive(src=str(f), dest_dir=str(dest), format="zip", name="backup", overwrite=True)
+        result1 = m.execute()
+        assert result1.changed
+
+        f.write_text("updated")
+        m2 = Archive(src=str(f), dest_dir=str(dest), format="zip", name="backup", overwrite=True)
+        result2 = m2.execute()
+        assert result2.changed
+
+        import zipfile
+        archive_path = Path(result2.data["path"])
+        with zipfile.ZipFile(archive_path) as zf:
+            content = zf.read("f.txt").decode()
+        assert content == "updated"
+
+    def test_archive_idempotent_without_overwrite(self, tmp_path):
+        """Без overwrite существующий архив не перезаписывается."""
+        f = tmp_path / "f.txt"
+        f.write_text("original")
+
+        m = Archive(src=str(f), format="zip", name="backup")
+        result1 = m.execute()
+        assert result1.changed
+
+        m2 = Archive(src=str(f), format="zip", name="backup")
+        result2 = m2.execute()
+        assert not result2.changed
+        assert "already exists" in result2.message
 
 
 # ============================================================

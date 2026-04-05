@@ -25,6 +25,7 @@ class Archive(BaseModule):
     dest_dir: str = param(default="", help="Output directory (default: parent of src)")
     format: str = param(default="zip", help="Archive format: zip, tar.gz, tar.xz")
     name: str = param(default="", help="Archive name (default: source_name + timestamp)")
+    overwrite: bool = param(default=False, help="Overwrite existing archive")
 
     _SUPPORTED_FORMATS = {"zip", "tar.gz", "tar.xz"}
 
@@ -51,11 +52,15 @@ class Archive(BaseModule):
         archive_path = dest / f"{base_name}.{self.format}"
 
         # Идемпотентность
+        changed = False
         if archive_path.exists():
-            return ModuleResult.ok(
-                f"Archive already exists: {archive_path.name}",
-                data={"path": str(archive_path), "size": archive_path.stat().st_size},
-            )
+            if not self.overwrite:
+                return ModuleResult.ok(
+                    f"Archive already exists: {archive_path.name}",
+                    data={"path": str(archive_path), "size": archive_path.stat().st_size},
+                )
+            archive_path.unlink()
+            changed = True
 
         try:
             if self.format == "zip":
@@ -63,15 +68,16 @@ class Archive(BaseModule):
             elif self.format in ("tar.gz", "tar.xz"):
                 self._create_tar(src_path, archive_path)
         except Exception as e:
-            # Удалить битый архив
             archive_path.unlink(missing_ok=True)
             return ModuleResult.error(f"Archive failed: {e}")
 
         size = archive_path.stat().st_size
         logger.info("Created archive: %s (%s)", archive_path.name, _human_size(size))
 
-        return ModuleResult.changed(
-            f"Archived: {archive_path.name}",
+        return ModuleResult(
+            status="ok",
+            message=f"Archived: {archive_path.name}",
+            changed=True,
             data={
                 "path": str(archive_path),
                 "format": self.format,

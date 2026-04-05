@@ -95,7 +95,7 @@ class Copy(BaseModule):
             msg_parts.append(f"{len(errors)} errors")
 
         return ModuleResult(
-            status="ok" if not errors else "ok",
+            status="ok" if not errors else "error",
             message="; ".join(msg_parts) if msg_parts else "Nothing to copy",
             changed=changed,
             data={
