@@ -451,3 +451,163 @@ print(json.dumps({'status': 'ok', 'message': server, 'data': {'server': server}}
 
         assert "super_secret_password_123" not in caplog.text
         assert "become" in caplog.text.lower()
+
+
+# ============================================================
+# PythonScriptAdapter
+# ============================================================
+
+from flowtask.engine.python_adapter import PythonScriptAdapter
+
+
+class TestPythonScriptAdapter:
+
+    def test_successful_execution(self, tmp_path):
+        script = tmp_path / "ok.py"
+        script.write_text('import json, sys\n'
+                          'd = json.loads(sys.stdin.read())\n'
+                          'print(json.dumps({"status": "ok", "message": "done", "changed": True}))\n')
+
+        adapter = PythonScriptAdapter(script)
+        result = adapter.execute(params={"key": "val"})
+        assert result.is_ok
+        assert result.changed
+        assert result.message == "done"
+
+    def test_error_execution(self, tmp_path):
+        script = tmp_path / "err.py"
+        script.write_text('import json, sys\n'
+                          'print("{\"status\":\"error\",\"message\":\"failed\"}")\n')
+
+        adapter = PythonScriptAdapter(script)
+        result = adapter.execute()
+        assert result.is_error
+        assert "failed" in result.message
+
+    def test_dry_run_flag(self, tmp_path):
+        script = tmp_path / "dry.py"
+        script.write_text('import json, sys\n'
+                          'd = json.loads(sys.stdin.read())\n'
+                          'if d.get("dry_run"):\n'
+                          '    print(json.dumps({"status": "ok", "message": "dry-run", "changed": False}))\n'
+                          'else:\n'
+                          '    print(json.dumps({"status": "ok", "message": "real", "changed": True}))\n')
+
+        adapter = PythonScriptAdapter(script)
+
+        result_dry = adapter.execute(dry_run=True)
+        assert "dry-run" in result_dry.message
+        assert not result_dry.changed
+
+        result_real = adapter.execute(dry_run=False)
+        assert "real" in result_real.message
+        assert result_real.changed
+
+    def test_params_passed(self, tmp_path):
+        script = tmp_path / "params.py"
+        script.write_text('import json, sys\n'
+                          'd = json.loads(sys.stdin.read())\n'
+                          'print(json.dumps({"status": "ok", "message": d["params"]["key"], "changed": False}))\n')
+
+        adapter = PythonScriptAdapter(script)
+        result = adapter.execute(params={"key": "test_value"})
+        assert result.message == "test_value"
+
+    def test_context_passed(self, tmp_path):
+        script = tmp_path / "ctx.py"
+        script.write_text('import json, sys\n'
+                          'd = json.loads(sys.stdin.read())\n'
+                          'print(json.dumps({"status": "ok", "message": d.get("context", {}).get("vars", {}).get("test_var", ""), "changed": False}))\n')
+
+        adapter = PythonScriptAdapter(script)
+        result = adapter.execute(params={}, context={"vars": {"test_var": "hello_world"}})
+        assert result.message == "hello_world"
+
+    def test_no_output(self, tmp_path):
+        script = tmp_path / "empty.py"
+        script.write_text('# empty\n')
+
+        adapter = PythonScriptAdapter(script)
+        result = adapter.execute()
+        assert result.is_error
+        assert "no output" in result.message
+
+    def test_invalid_json(self, tmp_path):
+        script = tmp_path / "badjson.py"
+        script.write_text('print("not json at all")\n')
+
+        adapter = PythonScriptAdapter(script)
+        result = adapter.execute()
+        assert result.is_error
+        assert "invalid JSON" in result.message
+
+    def test_timeout(self, tmp_path):
+        script = tmp_path / "slow.py"
+        script.write_text('import time\n'
+                          'time.sleep(10)\n')
+
+        adapter = PythonScriptAdapter(script)
+        result = adapter.execute(timeout=1)
+        assert result.is_error
+        assert "timed out" in result.message
+
+    def test_file_not_found(self):
+        with pytest.raises(FileNotFoundError):
+            PythonScriptAdapter(Path("/nonexistent/script.py"))
+
+    def test_adapter_repr(self, tmp_path):
+        script = tmp_path / "test.py"
+        script.write_text('print("ok")\n')
+        adapter = PythonScriptAdapter(script)
+        assert "test" in repr(adapter)
+
+    def test_stderr_captured(self, tmp_path, caplog):
+        import logging
+        script = tmp_path / "log.py"
+        script.write_text('import sys\n'
+                          'print("[INFO] step 1", file=sys.stderr)\n'
+                          'print("[INFO] step 2", file=sys.stderr)\n'
+                          'print(json.dumps({"status": "ok", "message": "done", "changed": False}))\n')
+
+        adapter = PythonScriptAdapter(script)
+        with caplog.at_level(logging.DEBUG, logger="flowtask.python_adapter"):
+            adapter.execute()
+
+        assert "step 1" in caplog.text
+        assert "step 2" in caplog.text
+
+
+class TestModuleLoaderPythonScripts:
+
+    def test_discover_python_scripts(self, tmp_path):
+        """ModuleLoader обнаруживает python-скрипты в modules/python/."""
+        modules_dir = tmp_path / "modules"
+        python_dir = modules_dir / "python"
+        python_dir.mkdir(parents=True)
+
+        (python_dir / "my_script.py").write_text('import json, sys\n'
+                                                 'print(json.dumps({"status": "ok", "message": "ok", "changed": False}))\n')
+
+        loader = ModuleLoader(extra_modules_dirs=[str(modules_dir)])
+        found = loader.discover()
+
+        assert "my_script" in found
+        mod = loader.get("my_script")
+        assert isinstance(mod, PythonScriptAdapter)
+
+    def test_python_scripts_list_type(self, tmp_path):
+        """list_modules возвращает 'python_script' для скриптов."""
+        modules_dir = tmp_path / "modules"
+        python_dir = modules_dir / "python"
+        python_dir.mkdir(parents=True)
+
+        (python_dir / "script.py").write_text('import json, sys\n'
+                                               'print(json.dumps({"status": "ok", "message": "ok", "changed": False}))\n')
+
+        loader = ModuleLoader(extra_modules_dirs=[str(modules_dir)])
+        loader.discover()
+        mod_list = loader.list_modules()
+
+        assert "script" in mod_list
+        assert mod_list["script"] == "python_script"
+

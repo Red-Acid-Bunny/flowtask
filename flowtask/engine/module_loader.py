@@ -4,6 +4,7 @@ ModuleLoader — обнаружение и загрузка модулей.
 Сканирует директории и регистрирует модули:
   - Python-модули: flowtask/modules/*.py → классы наследующие BaseModule
   - Пользовательские Python: modules/*.py
+  - Python-скрипты: modules/python/*.py → PythonScriptAdapter (JSON stdin/stdout)
   - Bash-модули: modules/bash/*.sh → BashModuleAdapter
 
 Все модули доступны через единый интерфейс get(name) → callable.
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .bash_adapter import BashModuleAdapter
+from .python_adapter import PythonScriptAdapter
 from ..modules.base import BaseModule
 
 logger = logging.getLogger("flowtask.module_loader")
@@ -41,7 +43,7 @@ class ModuleLoader:
     """
 
     def __init__(self, extra_modules_dirs: list[str | Path] | None = None):
-        self._registry: dict[str, type[BaseModule] | BashModuleAdapter] = {}
+        self._registry: dict[str, type[BaseModule] | BashModuleAdapter | PythonScriptAdapter] = {}
 
         # Стандартные директории для поиска
         builtin_python_dir = Path(__file__).parent.parent / "modules"
@@ -49,6 +51,7 @@ class ModuleLoader:
 
         self._search_dirs: list[Path] = []
         self._bash_dirs: list[Path] = []
+        self._python_script_dirs: list[Path] = []
 
         # Встроенные Python-модули (flowtask/modules/)
         if builtin_python_dir.exists():
@@ -57,6 +60,11 @@ class ModuleLoader:
         # Пользовательские Python-модули (modules/*.py)
         if user_modules_dir.exists():
             self._search_dirs.append(user_modules_dir)
+
+        # Пользовательские python-скрипты (modules/python/)
+        python_scripts_dir = user_modules_dir / "python"
+        if python_scripts_dir.exists():
+            self._python_script_dirs.append(python_scripts_dir)
 
         # Пользовательские bash-модули (modules/bash/)
         bash_dir = user_modules_dir / "bash"
@@ -72,6 +80,9 @@ class ModuleLoader:
                     bash = p / "bash"
                     if bash.exists():
                         self._bash_dirs.append(bash)
+                    python_scripts = p / "python"
+                    if python_scripts.exists():
+                        self._python_script_dirs.append(python_scripts)
 
     def discover(self) -> list[str]:
         """Сканировать директории и зарегистрировать все модули.
@@ -81,13 +92,21 @@ class ModuleLoader:
         """
         found = set()
 
-        # Python-модули
+        # Python-модули (классы, наследующие BaseModule)
         for search_dir in self._search_dirs:
             for py_file in search_dir.glob("*.py"):
                 if py_file.name.startswith("_"):
                     continue
                 names = self._load_python_module(py_file)
                 found.update(str(n) for n in names)  # ensure strings only
+
+        # Python-скрипты (modules/python/*.py)
+        for py_dir in self._python_script_dirs:
+            for py_file in py_dir.glob("*.py"):
+                if py_file.name.startswith("_"):
+                    continue
+                self._register_python_script(py_file)
+                found.add(py_file.stem)
 
         # Bash-модули
         for bash_dir in self._bash_dirs:
@@ -146,6 +165,14 @@ class ModuleLoader:
 
         return registered
 
+    def _register_python_script(self, path: Path) -> None:
+        """Зарегистрировать python-скрипт."""
+        name = path.stem
+        if name in self._registry:
+            logger.warning("Module '%s' already registered, overwriting with python script %s",
+                           name, path)
+        self._registry[name] = PythonScriptAdapter(path)
+
     def _register_bash_module(self, path: Path) -> None:
         """Зарегистрировать bash-скрипт."""
         name = path.stem
@@ -154,7 +181,7 @@ class ModuleLoader:
                            name, path)
         self._registry[name] = BashModuleAdapter(path)
 
-    def get(self, name: str) -> type[BaseModule] | BashModuleAdapter:
+    def get(self, name: str) -> type[BaseModule] | BashModuleAdapter | PythonScriptAdapter:
         """Получить модуль по имени.
 
         Args:
@@ -181,11 +208,13 @@ class ModuleLoader:
         """Список всех зарегистрированных модулей.
 
         Returns:
-            {name: type} — 'python' или 'bash'
+            {name: type} — 'python' (класс), 'python_script' или 'bash'
         """
         result = {}
         for name, module in sorted(self._registry.items(), key=lambda x: str(x[0])):
-            if isinstance(module, BashModuleAdapter):
+            if isinstance(module, PythonScriptAdapter):
+                result[name] = "python_script"
+            elif isinstance(module, BashModuleAdapter):
                 result[name] = "bash"
             elif inspect.isclass(module) and issubclass(module, BaseModule):
                 result[name] = "python"
