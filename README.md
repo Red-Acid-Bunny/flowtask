@@ -79,11 +79,10 @@ flowtask/
 │       ├── move.py            # Перемещение/переименование файлов
 │       ├── delete.py          # Удаление файлов/директорий
 │       ├── archive.py         # Создание архивов (zip, tar.gz, tar.xz)
-│       ├── mount_smb.py       # Монтирование SMB/CIFS-ресурса
-│       └── umount_smb.py      # Размонтирование SMB/CIFS-ресурса
 ├── modules/bash/              # Пользовательские Bash-модули
 │   ├── smb_mount.sh           # Монтирование SMB (Bash)
 │   └── smb_umount.sh          # Размонтирование SMB (Bash)
+├── modules/python/            # Пользовательские Python-скрипты (JSON stdin/stdout)
 ├── inventory/
 │   ├── vars.yml               # Переменные (коммитятся в репозиторий)
 │   ├── vars.local.yml         # Локальные переопределения (gitignored)
@@ -266,33 +265,32 @@ post_tasks:                  # задачи ПОСЛЕ основных (нап�
     dest_dir: "/archives/"     # По умолчанию: родительский каталог src
 ```
 
-### mount_smb
+### smb_mount
 
 Монтирование SMB/CIFS-ресурса через `mount.cifs`.
 
 ```yaml
 - name: "Монтирование SMB"
-  module: mount_smb
+  module: smb_mount
   params:
     server: "{{ vars.smb_server }}"    # Обязательный. Например: "192.168.0.8"
     share: "{{ vars.smb_share }}"      # Обязательный. Например: "box_delta_bin"
     mount_point: "/mnt/smb"            # По умолчанию: "/mnt/smb"
-    username: "{{ secrets.smb_user }}" # По умолчанию: "" (гостевой доступ)
+    user: "{{ secrets.smb_user }}"     # По умолчанию: "" (гостевой доступ)
     password: "{{ secrets.smb_pass }}" # По умолчанию: ""
-    domain: ""                          # По умолчанию: ""
-    version: "3.0"                      # По умолчанию: "3.0"
+    domain: ""                         # По умолчанию: ""
+    version: "3.0"                     # По умолчанию: "3.0"
 ```
 
-### umount_smb
+### smb_umount
 
 Размонтирование SMB/CIFS-ресурса.
 
 ```yaml
 - name: "Размонтирование SMB"
-  module: umount_smb
+  module: smb_umount
   params:
-    mount_point: "/mnt/smb"   # Обязательный
-    lazy: false               # По умолчанию: false. Использовать -l если занят
+    mount_point: "/mnt/smb"   # По умолчанию: "/mnt/smb"
 ```
 
 ---

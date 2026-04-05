@@ -11,7 +11,7 @@
 #   1. Убедитесь что sudo настроен (или используйте NOPASSWD)
 
 name: "Become — пример с sudo"
-inventory: example/inventory_rsync/
+inventory: demo/inventory_rsync/
 
 pre_tasks:
   # Эта задача требует sudo для доступа к /root

@@ -19,6 +19,7 @@ flowtask-context.md
 # Secrets
 inventory/secrets.yml
 inventory/vars.local.yml
+demo/**/secrets.yml
 
 # IDE
 .idea/
